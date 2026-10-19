@@ -1,0 +1,44 @@
+{
+  "name": "@prepito/monorepo",
+  "version": "0.0.1",
+  "description": "Prepito - koshi platform reference client monorepo",
+  "private": true,
+  "scripts": {
+    "dev:koshi": "cd ../../Koshi && npm run server:dev",
+    "dev:app": "pnpm --filter @prepito/app dev",
+    "typecheck": "pnpm --filter @prepito/app typecheck && pnpm --filter @prepito/shared typecheck",
+    "lint": "pnpm --filter @prepito/app lint && pnpm --filter @prepito/shared lint",
+    "install:all": "pnpm install --recursive",
+    "prepare": "pnpm install --recursive",
+    "changeset": "changeset",
+    "version": "changeset version",
+    "release": "changeset publish"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.27.0",
+    "typescript": "^5.4.0"
+  },
+  "packageManager": "pnpm@9.0.0",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ryopc/Prepito.git"
+  },
+  "license": "MIT",
+  "author": "ryopc",
+  "keywords": [
+    "prepito",
+    "koshi",
+    "messenger",
+    "monorepo",
+    "react-native",
+    "expo",
+    "e2e-encryption"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
+}

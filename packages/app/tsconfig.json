@@ -1,0 +1,26 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022"],
+    "jsx": "react-jsx",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "allowSyntheticDefaultImports": true,
+    "verbatimModuleSyntax": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"],
+      "@prepito/shared": ["../shared/src"]
+    },
+    "types": ["jest", "@testing-library/react-native", "expo/__types"]
+  },
+  "include": ["src/**/*", "app/**/*", "*.config.*", "expo-env.d.ts"],
+  "exclude": ["node_modules", "dist", ".expo"]
+}

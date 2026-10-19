@@ -1,0 +1,43 @@
+{
+  "name": "@prepito/shared",
+  "version": "0.0.1",
+  "description": "Shared types and utilities for Prepito - koshi platform reference client",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src --ext .ts"
+  },
+  "dependencies": {
+    "@ryopc/koshi": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "eslint": "^8.57.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ryopc/Prepito.git",
+    "directory": "packages/shared"
+  },
+  "license": "MIT",
+  "author": "ryopc",
+  "keywords": [
+    "prepito",
+    "koshi",
+    "messenger",
+    "e2e",
+    "signal-protocol",
+    "typescript"
+  ],
+  "files": [
+    "src/"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
