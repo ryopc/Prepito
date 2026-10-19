@@ -44,8 +44,7 @@ tmp/
 .env.local
 .env.*.local
 
-# EAS
-eas.json
+# EAS credentials (eas.json はコミット対象)
 credentials.json
 
 # Patches

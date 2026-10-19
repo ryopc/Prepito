@@ -1,0 +1,110 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g. 1.0.0)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck (quality gate)
+        run: pnpm typecheck
+
+      - name: Install EAS CLI
+        run: npm install -g eas-cli
+
+      - name: EAS Login
+        run: eas login --token ${{ secrets.EAS_TOKEN }}
+
+      - name: EAS Build Android (release APK)
+        id: build_android
+        working-directory: packages/app
+        run: |
+          RESULT=$(eas build --platform android --profile production --non-interactive --json)
+          echo "$RESULT" > /tmp/eas-android.json
+          ANDROID_URL=$(echo "$RESULT" | jq -r '.artifacts[0].url // empty')
+          ANDROID_FILE=$(echo "$RESULT" | jq -r '.artifacts[0].filename // "app.apk"')
+          echo "android_url=$ANDROID_URL" >> $GITHUB_OUTPUT
+          echo "android_filename=$ANDROID_FILE" >> $GITHUB_OUTPUT
+
+      - name: Download Android APK
+        run: |
+          curl -L -o Prepito-android.apk "${{ steps.build_android.outputs.android_url }}"
+          ls -lh Prepito-android.apk
+
+      - name: Determine release tag and version
+        id: tag
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            TAG="${{ github.ref_name }}"
+          else
+            INPUT_VERSION="${{ github.event.inputs.version }}"
+            if [ -z "$INPUT_VERSION" ]; then
+              TAG="v$(date +%Y.%m.%d-%H%M)"
+            else
+              TAG="v${INPUT_VERSION}"
+            fi
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git tag "$TAG"
+            git push origin "$TAG"
+          fi
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "version=$TAG" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        id: create_release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: ${{ steps.tag.outputs.version }}
+          body: |
+            ## Prepito ${{ steps.tag.outputs.version }}
+
+            E2E暗号化メッセンジャーアプリ (Signal Protocol / X3DH + Double Ratchet)
+
+            ### インストール
+
+            - **Android**: `Prepito-android.apk` をダウンロードしてインストール
+            - 未知のソースからのインストールを許可する必要があります
+
+            ### ビルド情報
+
+            - プラットフォーム: Android (APK)
+            - 暗号化: SQLite + SQLCipher (ローカルDB), Signal Protocol (E2E)
+          draft: false
+          prerelease: false
+          reuse: true
+
+      - name: Upload Android APK to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Prepito-android.apk
