@@ -1,0 +1,18 @@
+# CODEOWNERS
+# These users/teams will be requested for review when matching files are changed.
+
+# Global owners
+* @ryotagtagtag
+
+# Backend / Platform (koshi)
+/packages/shared/ @ryotagtagtag
+
+# Mobile App
+/packages/app/ @ryotagtagtag
+
+# CI/CD
+/.github/workflows/ @ryotagtagtag
+
+# Documentation
+/*.md @ryotagtagtag
+/docs/ @ryotagtagtag

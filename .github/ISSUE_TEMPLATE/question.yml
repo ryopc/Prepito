@@ -1,0 +1,21 @@
+---
+name: Question / Support
+about: 質問・サポート依頼
+title: "[Question] "
+labels: ["question", "needs-triage"]
+assignees: []
+---
+
+## 質問の内容
+<!-- 何を知りたいか、何で困っているか -->
+
+## 試したこと
+<!-- 自分で調べたり試したりしたこと -->
+
+## 環境
+- OS: 
+- Device: 
+- App Version: 
+
+## 関連ドキュメント・リンク
+<!-- 参考にしたドキュメントやリンクがあれば -->
