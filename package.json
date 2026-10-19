@@ -9,7 +9,6 @@
     "typecheck": "pnpm --filter @prepito/app typecheck && pnpm --filter @prepito/shared typecheck",
     "lint": "pnpm --filter @prepito/app lint && pnpm --filter @prepito/shared lint",
     "install:all": "pnpm install --recursive",
-    "prepare": "pnpm install --recursive",
     "changeset": "changeset",
     "version": "changeset version",
     "release": "changeset publish"
