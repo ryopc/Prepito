@@ -199,6 +199,15 @@ export const usersApi = {
       followersCount: number;
       followingCount: number;
     }>(`/api/users/${username}`),
+
+  /** プッシュ通知トークン登録 */
+  registerPushToken: (data: {
+    expoPushToken: string;
+    deviceId?: string;
+  }) => api.post('/api/users/me/push-token', data),
+
+  /** プッシュ通知トークン削除 */
+  unregisterPushToken: () => api.delete('/api/users/me/push-token'),
 };
 
 /** デバイス関連API */

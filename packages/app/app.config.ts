@@ -37,7 +37,10 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       'android.permission.WRITE_EXTERNAL_STORAGE',
       'android.permission.RECORD_AUDIO',
       'android.permission.USE_BIOMETRIC',
-      'android.permission.USE_FINGERPRINT'
+      'android.permission.USE_FINGERPRINT',
+      'android.permission.RECEIVE_BOOT_COMPLETED',
+      'android.permission.VIBRATE',
+      'android.permission.POST_NOTIFICATIONS',
     ],
     intentFilters: [
       {

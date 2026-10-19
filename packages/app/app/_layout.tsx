@@ -8,6 +8,7 @@ import { Stack, useRouter } from 'expo-router';
 import { Providers } from './providers';
 import { useAuthStore } from '@/store/auth';
 import { connectWebSocket, disconnectWebSocket } from '@/services/websocket';
+import { initializeNotifications, unregisterPushTokenIfAuthenticated } from '@/services/notifications';
 
 export default function RootLayout() {
   const router = useRouter();
@@ -27,6 +28,15 @@ export default function RootLayout() {
     return () => {
       disconnectWebSocket();
     };
+  }, [isAuthenticated]);
+
+  // 認証状態に基づくプッシュ通知初期化
+  useEffect(() => {
+    if (isAuthenticated) {
+      initializeNotifications();
+    } else {
+      unregisterPushTokenIfAuthenticated();
+    }
   }, [isAuthenticated]);
 
   // 認証状態に基づくルーティング
