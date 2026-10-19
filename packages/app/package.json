@@ -24,7 +24,7 @@
     "@tanstack/react-query": "^5.0.0",
     "@expo/vector-icons": "^14.0.0",
     "@noble/ed25519": "^2.1.0",
-    "expo": "~51.0.0",
+    "expo": "~58.0.12",
     "expo-constants": "~16.0.0",
     "expo-crypto": "~13.0.0",
     "expo-device": "~6.0.0",
