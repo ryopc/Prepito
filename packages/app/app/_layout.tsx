@@ -7,6 +7,7 @@ import React, { useEffect } from 'react';
 import { Stack, useRouter } from 'expo-router';
 import { Providers } from './providers';
 import { useAuthStore } from '@/store/auth';
+import { connectWebSocket, disconnectWebSocket } from '@/services/websocket';
 
 export default function RootLayout() {
   const router = useRouter();
@@ -15,6 +16,18 @@ export default function RootLayout() {
   useEffect(() => {
     initializeAuth();
   }, [initializeAuth]);
+
+  // 認証状態に基づく WebSocket 接続管理
+  useEffect(() => {
+    if (isAuthenticated) {
+      connectWebSocket();
+    } else {
+      disconnectWebSocket();
+    }
+    return () => {
+      disconnectWebSocket();
+    };
+  }, [isAuthenticated]);
 
   // 認証状態に基づくルーティング
   if (isLoading) {

@@ -12,8 +12,9 @@
  */
 
 import * as SQLite from 'expo-sqlite';
-import { getSecureItem, setSecureItem } from '../utils/secureStore';
+import { getSecureItem, setSecureItem } from '@/utils/secureStore';
 import { Platform } from 'react-native';
+import * as FileSystem from 'expo-file-system';
 
 /** データベース名 */
 const DB_NAME = 'prepito_encrypted.db';
@@ -155,6 +156,7 @@ async function initTables(db: SQLite.SQLiteDatabase): Promise<void> {
       local_id TEXT NOT NULL UNIQUE,           -- ローカル生成ID (送信時の楽観的ID)
       sender_id TEXT NOT NULL,
       message_type TEXT NOT NULL,              -- 'text' | 'image' | 'file' | 'system'
+      content TEXT,                            -- 暗号文 (base64) または平文 (オフライン復元用)
       content_hash TEXT,                       -- 暗号化コンテンツのハッシュ (検索用)
       timestamp INTEGER NOT NULL,              -- メッセージ作成時刻
       is_outgoing INTEGER NOT NULL,            -- 1=送信, 0=受信
@@ -183,6 +185,14 @@ async function initTables(db: SQLite.SQLiteDatabase): Promise<void> {
   const versionResult = db.getFirstSync<{ version: number }>('SELECT version FROM db_version ORDER BY version DESC LIMIT 1');
   if (!versionResult) {
     db.runSync('INSERT INTO db_version (version, applied_at) VALUES (1, ?)', [Date.now()]);
+  } else if (versionResult.version < 2) {
+    // マイグレーション v1→v2: message_index に content カラムを追加
+    try {
+      db.execSync('ALTER TABLE message_index ADD COLUMN content TEXT');
+    } catch {
+      // カラムが既に存在する場合は無視
+    }
+    db.runSync('UPDATE db_version SET version = 2, applied_at = ? WHERE version = 1', [Date.now()]);
   }
   
   console.log('[EncryptedDB] Tables initialized');
@@ -200,8 +210,8 @@ export function closeEncryptedDB(): void {
 export async function deleteEncryptedDB(): Promise<void> {
   closeEncryptedDB();
   try {
-    const { deleteFile } = await import('expo-file-system');
-    await deleteFile(`${SQLite.getDatabasePath(DB_NAME)}`, { idempotent: true });
+    const dbPath = `${FileSystem.documentDirectory}${DB_NAME}`;
+    await FileSystem.deleteAsync(dbPath, { idempotent: true });
     console.log('[EncryptedDB] Database deleted');
   } catch (e) {
     console.warn('[EncryptedDB] Failed to delete database file:', e);
@@ -211,26 +221,34 @@ export async function deleteEncryptedDB(): Promise<void> {
 /** ヘルパー: 単一行取得 */
 export async function dbGet<T>(sql: string, params: unknown[] = []): Promise<T | null> {
   const db = await getEncryptedDB();
-  return db.getFirstSync<T>(sql, params);
+  return db.getFirstSync<T>(sql, params as unknown as SQLite.SQLiteBindParams);
 }
 
 /** ヘルパー: 複数行取得 */
 export async function dbGetAll<T>(sql: string, params: unknown[] = []): Promise<T[]> {
   const db = await getEncryptedDB();
-  return db.getAllSync<T>(sql, params);
+  return db.getAllSync<T>(sql, params as unknown as SQLite.SQLiteBindParams);
 }
 
 /** ヘルパー: 実行 (INSERT/UPDATE/DELETE) */
 export async function dbRun(sql: string, params: unknown[] = []): Promise<{ lastInsertRowId: number; changes: number }> {
   const db = await getEncryptedDB();
-  const result = db.runSync(sql, params);
+  const result = db.runSync(sql, params as unknown as SQLite.SQLiteBindParams);
   return { lastInsertRowId: result.lastInsertRowId, changes: result.changes };
 }
 
-/** ヘルパー: トランザクション実行 */
+/** ヘルパー: トランザクション実行 (manual BEGIN/COMMIT/ROLLBACK) */
 export async function dbTransaction<T>(fn: (db: SQLite.SQLiteDatabase) => T): Promise<T> {
   const db = await getEncryptedDB();
-  return db.withTransactionSync(fn);
+  db.execSync('BEGIN TRANSACTION');
+  try {
+    const result = fn(db);
+    db.execSync('COMMIT');
+    return result;
+  } catch (e) {
+    db.execSync('ROLLBACK');
+    throw e;
+  }
 }
 
 /* =====================================================================
@@ -245,6 +263,7 @@ type DBMessageRow = {
   local_id: string;
   sender_id: string;
   message_type: string;
+  content: string | null;
   content_hash: string | null;
   timestamp: number;
   is_outgoing: number;
@@ -260,14 +279,15 @@ export async function saveMessage(message: {
   localId: string;
   senderId: string;
   messageType: string;
+  content?: string | null;
   contentHash?: string | null;
   timestamp: number;
   isOutgoing: boolean;
   status: string;
 }): Promise<void> {
   await dbRun(
-    'INSERT INTO message_index (conversation_id, conversation_type, message_id, local_id, sender_id, message_type, content_hash, timestamp, is_outgoing, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ' +
-    'ON CONFLICT(local_id) DO UPDATE SET message_id = excluded.message_id, status = excluded.status, updated_at = excluded.created_at',
+    'INSERT INTO message_index (conversation_id, conversation_type, message_id, local_id, sender_id, message_type, content, content_hash, timestamp, is_outgoing, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ' +
+    'ON CONFLICT(local_id) DO UPDATE SET message_id = excluded.message_id, content = excluded.content, content_hash = excluded.content_hash, status = excluded.status, updated_at = excluded.created_at',
     [
       message.conversationId,
       message.conversationType,
@@ -275,6 +295,7 @@ export async function saveMessage(message: {
       message.localId,
       message.senderId,
       message.messageType,
+      message.content ?? null,
       message.contentHash ?? null,
       message.timestamp,
       message.isOutgoing ? 1 : 0,
