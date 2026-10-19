@@ -20,6 +20,13 @@ import {
 } from '@/services/dm';
 import { usersApi, dmsApi } from '@/services/api';
 import { useAuthStore } from './auth';
+import {
+  saveMessage,
+  loadMessages,
+  loadUnreadCount,
+  markMessagesRead,
+  updateMessageStatus,
+} from '@/services/db/encrypted-db';
 
 /** SecureStore アダプター */
 const secureStoreAdapter = {
@@ -130,47 +137,32 @@ export const useDMStore = create<DMState>()(
         }
       },
 
-      // メッセージ履歴取得
+      // メッセージ履歴取得 (DB優先、サーバーAPIとの併用)
       fetchMessages: async (conversationId: string, otherUserId: string) => {
         set({ messagesLoading: true, error: null, activeConversationId: conversationId });
         try {
           const { user } = useAuthStore.getState();
           if (!user) return;
 
-          // サーバーからDM履歴取得 (dmsApi.list は全スレッドなので、ここではプレースホルダー)
-          // 実際には /api/dms/:conversationId/messages エンドポイントが必要
-          const rawMessages = await dmsApi.list({ limit: 100 });
-          const myId = user.id;
+          // 1. ローカルDBからメッセージを復元
+          const dbMessages = await loadMessages(conversationId, 'dm', 100);
+          const fromDb: DMMessage[] = dbMessages.map((row) => ({
+            id: row.message_id,
+            conversationId: row.conversation_id,
+            fromUserId: row.sender_id,
+            fromUsername: '', // DBにはユーザー名を保存しないため空
+            fromDisplayName: undefined,
+            plaintext: '', // 暗号文はDBに保存しない (SQLCipher暗号化済みだが平文は保存しない)
+            isRead: row.status === 'read',
+            isOutgoing: row.is_outgoing === 1,
+            status: row.status as DMMessage['status'],
+            createdAt: new Date(row.timestamp).toISOString(),
+            localId: row.local_id,
+          }));
 
-          const messages: DMMessage[] = await Promise.all(
-            rawMessages
-              .filter((dm: any) => {
-                const isWithOther =
-                  (dm.from.id === otherUserId && dm.to.id === myId) ||
-                  (dm.from.id === myId && dm.to.id === otherUserId);
-                return isWithOther;
-              })
-              .map(async (dm: any) => {
-                // 復号 (署名鍵は相手から取得・キャッシュ)
-                // プレースホルダー: 復号ロジックは receiveMessage 側で実行
-                const decrypted = await receiveDM(dm, '', myId);
-                return {
-                  id: dm.id,
-                  conversationId,
-                  fromUserId: dm.from.id,
-                  fromUsername: dm.from.username,
-                  fromDisplayName: dm.from.displayName,
-                  plaintext: decrypted?.plaintext ?? '[復号に失敗]',
-                  isRead: dm.isRead,
-                  isOutgoing: dm.from.id === myId,
-                  status: 'read',
-                  createdAt: dm.createdAt,
-                  localId: `local-${dm.id}`,
-                };
-              })
-          );
-
-          set({ messages, messagesLoading: false });
+          // 2. サーバーから最新メッセージを取得 (実際には /api/dms/:conversationId/messages エンドポイント)
+          // プレースホルダー: dmsApi.list は全スレッドなのでここでは未実装
+          set({ messages: fromDb, messagesLoading: false });
         } catch (err) {
           set({
             error: err instanceof Error ? err.message : 'メッセージ取得に失敗しました',
@@ -206,16 +198,30 @@ export const useDMStore = create<DMState>()(
         }));
 
         try {
-          await sendDM({ recipientId, plaintext });
+          const result = await sendDM({ recipientId, plaintext });
+
+          // DBに保存 (messageId はサーバーから返ってくる)
+          await saveMessage({
+            conversationId,
+            conversationType: 'dm',
+            messageId: result.id,
+            localId,
+            senderId: user.id,
+            messageType: 'text',
+            timestamp: Date.now(),
+            isOutgoing: true,
+            status: 'sent',
+          });
 
           // 送信成功: ステータス更新
           set((state) => ({
             messages: state.messages.map((m) =>
-              m.localId === localId ? { ...m, status: 'sent' } : m
+              m.localId === localId ? { ...m, id: result.id, status: 'sent' } : m
             ),
           }));
         } catch (err) {
           // 送信失敗: ステータスを failed に
+          await updateMessageStatus(localId, 'failed');
           set((state) => ({
             messages: state.messages.map((m) =>
               m.localId === localId ? { ...m, status: 'failed' } : m
@@ -233,6 +239,7 @@ export const useDMStore = create<DMState>()(
         const decrypted = await receiveDM(raw, senderPublicKeyBase64, user.id);
         if (!decrypted) return;
 
+        const localId = `local-${decrypted.id}`;
         const message: DMMessage = {
           id: decrypted.id,
           conversationId: decrypted.conversationId,
@@ -244,8 +251,21 @@ export const useDMStore = create<DMState>()(
           isOutgoing: false,
           status: 'read',
           createdAt: decrypted.createdAt,
-          localId: `local-${decrypted.id}`,
+          localId,
         };
+
+        // DBに保存
+        await saveMessage({
+          conversationId: decrypted.conversationId,
+          conversationType: 'dm',
+          messageId: decrypted.id,
+          localId,
+          senderId: decrypted.fromUserId,
+          messageType: 'text',
+          timestamp: new Date(decrypted.createdAt).getTime(),
+          isOutgoing: false,
+          status: 'read',
+        });
 
         set((state) => ({
           messages: [...state.messages, message],
@@ -265,13 +285,36 @@ export const useDMStore = create<DMState>()(
 
       // 既読マーク
       markAsRead: async (conversationId: string) => {
-        // TODO: API 呼び出し (markRead)
+        // API 呼び出し (markRead) と DB 更新
+        await dmsApi.markRead(conversationId).catch(() => {});
+        await markMessagesRead(conversationId, 'dm');
         set((state) => ({
           threads: state.threads.map((t) =>
             t.conversationId === conversationId ? { ...t, unreadCount: 0 } : t
           ),
           unreadCount: 0,
         }));
+      },
+
+      // DBからメッセージを復元 (アプリ起動時など)
+      loadMessagesFromDB: async (conversationId: string) => {
+        const dbMessages = await loadMessages(conversationId, 'dm', 100);
+        const unread = await loadUnreadCount(conversationId, 'dm');
+        const messages: DMMessage[] = dbMessages.map((row) => ({
+          id: row.message_id,
+          conversationId: row.conversation_id,
+          fromUserId: row.sender_id,
+          fromUsername: '',
+          fromDisplayName: undefined,
+          plaintext: '',
+          isRead: row.status === 'read',
+          isOutgoing: row.is_outgoing === 1,
+          status: row.status as DMMessage['status'],
+          createdAt: new Date(row.timestamp).toISOString(),
+          localId: row.local_id,
+        }));
+
+        set({ messages, unreadCount: unread, messagesLoading: false });
       },
 
       setError: (error) => set({ error }),

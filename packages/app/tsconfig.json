@@ -14,10 +14,9 @@
     "noEmit": true,
     "allowSyntheticDefaultImports": true,
     "verbatimModuleSyntax": true,
-    "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"],
-      "@prepito/shared": ["../shared/src"]
+      "@/*": ["./src/*"],
+      "@prepito/shared": ["./../shared/src"]
     },
     "types": ["jest", "@testing-library/react-native"]
   },

@@ -232,3 +232,88 @@ export async function dbTransaction<T>(fn: (db: SQLite.SQLiteDatabase) => T): Pr
   const db = await getEncryptedDB();
   return db.withTransactionSync(fn);
 }
+
+/* =====================================================================
+   メッセージ永続化ヘルパー (message_index テーブル)
+   ===================================================================== */
+
+type DBMessageRow = {
+  id: number;
+  conversation_id: string;
+  conversation_type: string;
+  message_id: string;
+  local_id: string;
+  sender_id: string;
+  message_type: string;
+  content_hash: string | null;
+  timestamp: number;
+  is_outgoing: number;
+  status: string;
+  created_at: number;
+};
+
+/** メッセージを1件保存 (UPSERT) */
+export async function saveMessage(message: {
+  conversationId: string;
+  conversationType: 'dm' | 'group';
+  messageId: string;
+  localId: string;
+  senderId: string;
+  messageType: string;
+  contentHash?: string | null;
+  timestamp: number;
+  isOutgoing: boolean;
+  status: string;
+}): Promise<void> {
+  await dbRun(
+    'INSERT INTO message_index (conversation_id, conversation_type, message_id, local_id, sender_id, message_type, content_hash, timestamp, is_outgoing, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ' +
+    'ON CONFLICT(local_id) DO UPDATE SET message_id = excluded.message_id, status = excluded.status, updated_at = excluded.created_at',
+    [
+      message.conversationId,
+      message.conversationType,
+      message.messageId,
+      message.localId,
+      message.senderId,
+      message.messageType,
+      message.contentHash ?? null,
+      message.timestamp,
+      message.isOutgoing ? 1 : 0,
+      message.status,
+      message.timestamp,
+    ]
+  );
+}
+
+/** メッセージステータス更新 */
+export async function updateMessageStatus(localId: string, status: string): Promise<void> {
+  await dbRun('UPDATE message_index SET status = ? WHERE local_id = ?', [status, localId]);
+}
+
+/** 会話のメッセージ一覧を時系列で取得 */
+export async function loadMessages(
+  conversationId: string,
+  conversationType: 'dm' | 'group',
+  limit: number = 100
+): Promise<DBMessageRow[]> {
+  return dbGetAll<DBMessageRow>(
+    'SELECT * FROM message_index WHERE conversation_id = ? AND conversation_type = ? ORDER BY timestamp ASC LIMIT ?',
+    [conversationId, conversationType, limit]
+  );
+}
+
+/** 未読メッセージ数取得 (受信・未読のみ) */
+export async function loadUnreadCount(conversationId: string, conversationType: 'dm' | 'group'): Promise<number> {
+  const row = await dbGet<{ count: number }>(
+    'SELECT COUNT(*) as count FROM message_index WHERE conversation_id = ? AND conversation_type = ? AND is_outgoing = 0 AND status != ?',
+    [conversationId, conversationType, 'read']
+  );
+  return row?.count || 0;
+}
+
+/** メッセージを既読にする */
+export async function markMessagesRead(conversationId: string, conversationType: 'dm' | 'group'): Promise<void> {
+  await dbRun(
+    'UPDATE message_index SET status = ? WHERE conversation_id = ? AND conversation_type = ? AND is_outgoing = 0',
+    ['read', conversationId, conversationType]
+  );
+}
