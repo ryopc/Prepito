@@ -145,8 +145,8 @@ importers:
   packages/shared:
     dependencies:
       '@ryopc/koshi':
-        specifier: file:../../../Koshi
-        version: file:../Koshi(bare-url@2.5.5)(typescript@5.9.3)
+        specifier: ^4.0.0
+        version: 4.0.0(bare-url@2.5.5)(typescript@5.9.3)
     devDependencies:
       eslint:
         specifier: ^8.57.0
@@ -1514,8 +1514,8 @@ packages:
     engines: {node: '>=18.0.0'}
     hasBin: true
 
-  '@ryopc/koshi@file:../Koshi':
-    resolution: {directory: ../Koshi, type: directory}
+  '@ryopc/koshi@4.0.0':
+    resolution: {integrity: sha512-Ff7rarLxZq7JZd94HK21PJIu1dYAcIxFezdrmjOCvUUzw2aT2J/pnDzzgNGzrGfvyT/7olmNiqzYvwDKkEV1jg==}
     engines: {node: '>=18.0.0'}
     hasBin: true
 
@@ -8684,7 +8684,7 @@ snapshots:
       - typescript
       - utf-8-validate
 
-  '@ryopc/koshi@file:../Koshi(bare-url@2.5.5)(typescript@5.9.3)':
+  '@ryopc/koshi@4.0.0(bare-url@2.5.5)(typescript@5.9.3)':
     dependencies:
       '@noble/ed25519': 2.3.0
       b4a: 1.9.0
