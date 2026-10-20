@@ -18,7 +18,7 @@
       "@/*": ["./src/*"],
       "@prepito/shared": ["./../shared/src"]
     },
-    "types": ["jest", "@testing-library/react-native"]
+    "types": ["jest", "@testing-library/react-native", "node"]
   },
   "include": ["src/**/*", "app/**/*", "*.config.*", "expo-env.d.ts"],
   "exclude": ["node_modules", "dist", ".expo"]

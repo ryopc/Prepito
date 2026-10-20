@@ -1,0 +1,19 @@
+diff --git a/android/ExpoModulesCorePlugin.gradle b/android/ExpoModulesCorePlugin.gradle
+index bcf9b003afbb2eac557c2928509d0b5672f70e02..1f95e5422a48fd936eef3d22b4b5b80d04ca97fc 100644
+--- a/android/ExpoModulesCorePlugin.gradle
++++ b/android/ExpoModulesCorePlugin.gradle
+@@ -82,7 +82,13 @@ ext.useExpoPublishing = {
+     publishing {
+       publications {
+         release(MavenPublication) {
+-          from components.release
++          // Gradle 8.0 以降 SoftwareComponentContainer.getRelease() は削除された。
++          // AGP 8.x は release SoftwareComponent を components に登録しないため、
++          // 存在する場合のみ publication に追加する（アプリビルドでは内容不要）。
++          def releaseComponent = project.components.findByName('release')
++          if (releaseComponent != null) {
++            from releaseComponent
++          }
+         }
+       }
+       repositories {

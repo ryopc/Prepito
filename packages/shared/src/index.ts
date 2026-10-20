@@ -50,7 +50,7 @@ export type ConversationType = 'dm' | 'group';
 /** コンバーション識別子 */
 export interface ConversationId {
   type: ConversationType;
-  id: string;  // DM: 相手のuserId, Group: groupId
+  id: string; // DM: 相手のuserId, Group: groupId
 }
 
 /** メッセージ統一型（UI表示用） */
@@ -60,8 +60,8 @@ export interface UnifiedMessage {
   senderId: string;
   senderUsername: string;
   senderDisplayName?: string;
-  content: string;           // 復号済み平文 (E2E後)
-  isOutgoing: boolean;       // 自分が送信したか
+  content: string; // 復号済み平文 (E2E後)
+  isOutgoing: boolean; // 自分が送信したか
   status: 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
   messageType: 'text' | 'image' | 'file' | 'system';
   replyTo?: string;
@@ -81,5 +81,5 @@ export interface TypingState {
   conversationId: ConversationId;
   userId: string;
   username: string;
-  startedAt: number;  // Date.now()
+  startedAt: number; // Date.now()
 }
