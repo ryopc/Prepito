@@ -1,7 +1,7 @@
 /**
  * Encrypted Database Service
  * SQLite with SQLCipher for secure local storage
- * 
+ *
  * Tables:
  * - identity_keys: Local identity key pair
  * - pre_keys: One-time prekeys (X3DH)
@@ -13,8 +13,9 @@
 
 import * as SQLite from 'expo-sqlite';
 import { getSecureItem, setSecureItem } from '@/utils/secureStore';
-import { Platform } from 'react-native';
 import * as FileSystem from 'expo-file-system';
+import { getRandomBytes } from 'expo-crypto';
+import { bytesToHex } from '../crypto/bytes';
 
 /** データベース名 */
 const DB_NAME = 'prepito_encrypted.db';
@@ -22,13 +23,14 @@ const DB_NAME = 'prepito_encrypted.db';
 /** SQLCipher 暗号化キー取得 (SecureStore から取得、なければ生成) */
 async function getEncryptionKey(): Promise<string> {
   const KEY_NAME = 'prepito.db_encryption_key';
-  
+
   let key = await getSecureItem(KEY_NAME);
   if (!key) {
     // 256-bit キー生成 (32 bytes = 64 hex chars)
-    const bytes = new Uint8Array(32);
-    crypto.getRandomValues(bytes);
-    key = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+    // NOTE: Hermes には crypto グローバルが存在しないため、
+    // expo-crypto (ネイティブ CSPRNG) を使用する。
+    const bytes = getRandomBytes(32);
+    key = bytesToHex(bytes);
     await setSecureItem(KEY_NAME, key);
   }
   return key;
@@ -39,16 +41,16 @@ let _db: SQLite.SQLiteDatabase | null = null;
 
 export async function getEncryptedDB(): Promise<SQLite.SQLiteDatabase> {
   if (_db) return _db;
-  
+
   const encryptionKey = await getEncryptionKey();
-  
+
   // SQLite データベースオープン (SQLCipher 暗号化)
   _db = SQLite.openDatabaseSync(DB_NAME, {
     // SQLCipher 用オプション
     // iOS/Android 両対応
     useNewConnection: true,
   });
-  
+
   // 暗号化設定 (PRAGMA key)
   // 注意: expo-sqlite では openDatabaseSync 後に PRAGMA key を実行
   try {
@@ -61,10 +63,10 @@ export async function getEncryptedDB(): Promise<SQLite.SQLiteDatabase> {
     console.error('[EncryptedDB] Failed to set encryption pragmas:', e);
     throw e;
   }
-  
+
   // テーブル作成
   await initTables(_db);
-  
+
   console.log('[EncryptedDB] Database initialized with SQLCipher');
   return _db;
 }
@@ -161,7 +163,8 @@ async function initTables(db: SQLite.SQLiteDatabase): Promise<void> {
       timestamp INTEGER NOT NULL,              -- メッセージ作成時刻
       is_outgoing INTEGER NOT NULL,            -- 1=送信, 0=受信
       status TEXT NOT NULL DEFAULT 'sent',     -- 'sending' | 'sent' | 'delivered' | 'read' | 'failed'
-      created_at INTEGER NOT NULL
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL DEFAULT 0    -- 行が最後に更新された時刻
     );
     CREATE INDEX IF NOT EXISTS idx_message_index_conv ON message_index (conversation_id, conversation_type, timestamp);
     CREATE INDEX IF NOT EXISTS idx_message_index_local_id ON message_index (local_id);
@@ -180,21 +183,42 @@ async function initTables(db: SQLite.SQLiteDatabase): Promise<void> {
       applied_at INTEGER NOT NULL
     );
   `);
-  
+
   // 初期バージョン記録
-  const versionResult = db.getFirstSync<{ version: number }>('SELECT version FROM db_version ORDER BY version DESC LIMIT 1');
+  const versionResult = db.getFirstSync<{ version: number }>(
+    'SELECT version FROM db_version ORDER BY version DESC LIMIT 1'
+  );
   if (!versionResult) {
     db.runSync('INSERT INTO db_version (version, applied_at) VALUES (1, ?)', [Date.now()]);
-  } else if (versionResult.version < 2) {
-    // マイグレーション v1→v2: message_index に content カラムを追加
-    try {
-      db.execSync('ALTER TABLE message_index ADD COLUMN content TEXT');
-    } catch {
-      // カラムが既に存在する場合は無視
+  } else {
+    // マイグレーションはバージョン順に独立して適用する
+    // （else if で連結すると中間バージョンを飛ばした場合に適用されない）
+    if (versionResult.version < 2) {
+      // マイグレーション v1→v2: message_index に content カラムを追加
+      try {
+        db.execSync('ALTER TABLE message_index ADD COLUMN content TEXT');
+      } catch {
+        // カラムが既に存在する場合は無視
+      }
+      db.runSync('UPDATE db_version SET version = 2, applied_at = ? WHERE version = 1', [
+        Date.now(),
+      ]);
     }
-    db.runSync('UPDATE db_version SET version = 2, applied_at = ? WHERE version = 1', [Date.now()]);
+    if (versionResult.version < 3) {
+      // マイグレーション v2→v3: message_index に updated_at カラムを追加
+      // （UPSERT の ON CONFLICT 句が updated_at を参照しており、
+      //   カラムが無いとメッセージ保存が常に失敗する）
+      try {
+        db.execSync('ALTER TABLE message_index ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0');
+      } catch {
+        // カラムが既に存在する場合は無視
+      }
+      db.runSync('UPDATE db_version SET version = 3, applied_at = ? WHERE version = 2', [
+        Date.now(),
+      ]);
+    }
   }
-  
+
   console.log('[EncryptedDB] Tables initialized');
 }
 
@@ -231,7 +255,10 @@ export async function dbGetAll<T>(sql: string, params: unknown[] = []): Promise<
 }
 
 /** ヘルパー: 実行 (INSERT/UPDATE/DELETE) */
-export async function dbRun(sql: string, params: unknown[] = []): Promise<{ lastInsertRowId: number; changes: number }> {
+export async function dbRun(
+  sql: string,
+  params: unknown[] = []
+): Promise<{ lastInsertRowId: number; changes: number }> {
   const db = await getEncryptedDB();
   const result = db.runSync(sql, params as unknown as SQLite.SQLiteBindParams);
   return { lastInsertRowId: result.lastInsertRowId, changes: result.changes };
@@ -286,8 +313,8 @@ export async function saveMessage(message: {
   status: string;
 }): Promise<void> {
   await dbRun(
-    'INSERT INTO message_index (conversation_id, conversation_type, message_id, local_id, sender_id, message_type, content, content_hash, timestamp, is_outgoing, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ' +
-    'ON CONFLICT(local_id) DO UPDATE SET message_id = excluded.message_id, content = excluded.content, content_hash = excluded.content_hash, status = excluded.status, updated_at = excluded.created_at',
+    'INSERT INTO message_index (conversation_id, conversation_type, message_id, local_id, sender_id, message_type, content, content_hash, timestamp, is_outgoing, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ' +
+      'ON CONFLICT(local_id) DO UPDATE SET message_id = excluded.message_id, content = excluded.content, content_hash = excluded.content_hash, status = excluded.status, updated_at = excluded.updated_at',
     [
       message.conversationId,
       message.conversationType,
@@ -300,6 +327,7 @@ export async function saveMessage(message: {
       message.timestamp,
       message.isOutgoing ? 1 : 0,
       message.status,
+      message.timestamp,
       message.timestamp,
     ]
   );
@@ -323,7 +351,10 @@ export async function loadMessages(
 }
 
 /** 未読メッセージ数取得 (受信・未読のみ) */
-export async function loadUnreadCount(conversationId: string, conversationType: 'dm' | 'group'): Promise<number> {
+export async function loadUnreadCount(
+  conversationId: string,
+  conversationType: 'dm' | 'group'
+): Promise<number> {
   const row = await dbGet<{ count: number }>(
     'SELECT COUNT(*) as count FROM message_index WHERE conversation_id = ? AND conversation_type = ? AND is_outgoing = 0 AND status != ?',
     [conversationId, conversationType, 'read']
@@ -332,7 +363,10 @@ export async function loadUnreadCount(conversationId: string, conversationType: 
 }
 
 /** メッセージを既読にする */
-export async function markMessagesRead(conversationId: string, conversationType: 'dm' | 'group'): Promise<void> {
+export async function markMessagesRead(
+  conversationId: string,
+  conversationType: 'dm' | 'group'
+): Promise<void> {
   await dbRun(
     'UPDATE message_index SET status = ? WHERE conversation_id = ? AND conversation_type = ? AND is_outgoing = 0',
     ['read', conversationId, conversationType]

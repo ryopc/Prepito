@@ -2,50 +2,59 @@
  * ed25519 Cryptography Utilities
  * Uses @noble/ed25519 for key generation and signing
  * Uses expo-crypto for CSPRNG
+ *
+ * ## エンコーディングは hex で統一する
+ *
+ * koshi サーバは公開鍵を **64 文字の hex** として検証し
+ * (`/^[0-9a-f]{64}$/i`)、署名も `hexToBytes()` でデコードする
+ * （`@ryopc/koshi/src/auth/ed25519.js`）ため、base64 で送信すると
+ * 登録が 400（"Invalid public key format"）、ログインが 401 になる。
+ * サーバ側と同じ hex に統一する。
  */
 
 import * as ed25519 from '@noble/ed25519';
 import { getRandomBytes } from 'expo-crypto';
+import { base64ToBytes, bytesToHex, hexToBytes, utf8Encode } from '../services/crypto/bytes';
 
 /** 鍵ペア生成 */
 export async function generateKeypair(): Promise<{
-  publicKey: string;   // base64 encoded 32-byte public key
-  secretKey: string;   // base64 encoded 32-byte secret key (seed)
+  publicKey: string; // hex encoded 32-byte public key (64 chars)
+  secretKey: string; // hex encoded 32-byte secret key (seed) (64 chars)
 }> {
   // シード生成 (32 bytes)
   const seed = getRandomBytes(32);
-  
+
   // 公開鍵導出
   const publicKey = await ed25519.getPublicKeyAsync(seed);
-  
+
   return {
-    publicKey: bytesToBase64(publicKey),
-    secretKey: bytesToBase64(seed), // シードを秘密鍵として保存
+    publicKey: bytesToHex(publicKey),
+    secretKey: bytesToHex(seed), // シードを秘密鍵として保存
   };
 }
 
-/** メッセージ署名 */
-export async function signMessage(message: string, secretKeyBase64: string): Promise<string> {
-  const secretKey = base64ToBytes(secretKeyBase64);
+/** メッセージ署名 (hex) */
+export async function signMessage(message: string, secretKeyHex: string): Promise<string> {
+  const secretKey = decodeSecretKey(secretKeyHex);
   const messageBytes = stringToBytes(message);
-  
+
   // @noble/ed25519 の非同期署名
   const signature = await ed25519.signAsync(messageBytes, secretKey);
-  
-  return bytesToBase64(signature);
+
+  return bytesToHex(signature);
 }
 
-/** 署名検証 */
+/** 署名検証 (hex) */
 export async function verifySignature(
   message: string,
-  signatureBase64: string,
-  publicKeyBase64: string
+  signatureHex: string,
+  publicKeyHex: string
 ): Promise<boolean> {
   try {
-    const signature = base64ToBytes(signatureBase64);
-    const publicKey = base64ToBytes(publicKeyBase64);
+    const signature = hexToBytes(signatureHex);
+    const publicKey = hexToBytes(publicKeyHex);
     const messageBytes = stringToBytes(message);
-    
+
     return await ed25519.verifyAsync(signature, messageBytes, publicKey);
   } catch {
     return false;
@@ -53,51 +62,58 @@ export async function verifySignature(
 }
 
 /** 公開鍵から秘密鍵を導出 (シードから再生成) */
-export async function getPublicKeyFromSecret(secretKeyBase64: string): Promise<string> {
-  const secretKey = base64ToBytes(secretKeyBase64);
+export async function getPublicKeyFromSecret(secretKeyHex: string): Promise<string> {
+  const secretKey = decodeSecretKey(secretKeyHex);
   const publicKey = await ed25519.getPublicKeyAsync(secretKey);
-  return bytesToBase64(publicKey);
+  return bytesToHex(publicKey);
 }
 
 /** キーペアの整合性チェック */
-export async function validateKeypair(secretKeyBase64: string, expectedPublicKeyBase64: string): Promise<boolean> {
-  const derivedPublicKey = await getPublicKeyFromSecret(secretKeyBase64);
-  return derivedPublicKey === expectedPublicKeyBase64;
+export async function validateKeypair(
+  secretKeyHex: string,
+  expectedPublicKeyHex: string
+): Promise<boolean> {
+  const derivedPublicKey = await getPublicKeyFromSecret(secretKeyHex);
+  return derivedPublicKey === expectedPublicKeyHex;
 }
 
 /** バッチ署名 (複数メッセージを一度に署名) */
-export async function signMessages(messages: string[], secretKeyBase64: string): Promise<string[]> {
-  const secretKey = base64ToBytes(secretKeyBase64);
+export async function signMessages(messages: string[], secretKeyHex: string): Promise<string[]> {
+  const secretKey = decodeSecretKey(secretKeyHex);
   const results: string[] = [];
-  
+
   for (const message of messages) {
-    const signature = await ed25519.signAsync(stringToBytes(message), secretKey);
-    results.push(bytesToBase64(signature));
+    const messageBytes = stringToBytes(message);
+    const signature = await ed25519.signAsync(messageBytes, secretKey);
+    results.push(bytesToHex(signature));
   }
-  
   return results;
 }
 
 // ==================== ヘルパー関数 ====================
 
-function bytesToBase64(bytes: Uint8Array): string {
-  let binary = '';
-  for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i]);
+/**
+ * 秘密鍵のデコード
+ *
+ * 新形式は hex。以前のバージョンで base64 として SecureStore に
+ * 保存された秘密鍵が残っている可能性があるため、hex でない場合は
+ * base64 として読み替える（移行用のフォールバック）。
+ */
+function decodeSecretKey(value: string): Uint8Array {
+  if (value.length === 64 && isHex(value)) {
+    return hexToBytes(value);
   }
-  return btoa(binary);
+  return base64ToBytes(value);
 }
 
-function base64ToBytes(base64: string): Uint8Array {
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return bytes;
+/** 16進文字列か判定 */
+function isHex(value: string): boolean {
+  return /^[0-9a-fA-F]+$/.test(value);
 }
 
+// NOTE: Hermes (React Native 0.74) には TextEncoder / atob が
+// グローバルとして存在しないため、エンコーディングはすべて
+// services/crypto/bytes.ts の自前実装を使用する。
 function stringToBytes(str: string): Uint8Array {
-  const encoder = new TextEncoder();
-  return encoder.encode(str);
+  return utf8Encode(str);
 }

@@ -1,36 +1,45 @@
 /**
  * X3DH Device Key Generation & Management
- * Uses @signalapp/libsignal-client for Signal Protocol key operations
- * 
+ *
+ * 純 TypeScript 実装 (X25519 + XEdDSA) を使う。
+ * libsignal-client の Node 専用ネイティブ依存を排除するため、
+ * Expo Development Build (Hermes) でもそのまま動作する。
+ *
  * Key types:
- * - IdentityKeyPair: Long-term identity key (X25519)
- * - PrivateKey/PublicKey: PreKeys (X25519)
- * - RegistrationId: Unique device identifier (1-16380)
- * 
- * Note: libsignal-client requires React Native JSI / Hermes
- * Must use Expo Development Build (EAS Build) - not Expo Go
+ * - IdentityKeyPair: 長期識別鍵 (X25519)
+ * - PrivateKey/PublicKey: PreKey (X25519)
+ * - RegistrationId: 端末ごとの識別子 (1-16380)
  */
 
-import { 
-  IdentityKeyPair, 
-  PrivateKey, 
-  PublicKey,
-  PreKeyBundle,
-} from '@signalapp/libsignal-client';
-import { 
-  saveDeviceKeys, 
-  loadDeviceKeys, 
+import {
+  saveDeviceKeys,
+  loadDeviceKeys,
   clearDeviceKeys,
   type DeviceKeyBundle,
   getRemainingPreKeys,
   replenishPreKeys,
 } from '@/utils/secureStore';
+import { getLocalRegistrationId, storePreKey, storeSignedPreKey } from './signal-store';
+import { PreKeyBundle, PrivateKey, PublicKey } from './signal-keys';
+import { base64ToBytes, bytesToBase64 } from './bytes';
 import { devicesApi } from '@/services/api';
+import { setServerDeviceId } from '@/utils/secureStore';
 
 /** 定数 */
 const ONETIME_PREKEY_COUNT = 100;
 const PREKEY_REPLENISH_THRESHOLD = 20;
 const PREKEY_REPLENISH_COUNT = 50;
+
+/**
+ * アップロードする one-time prekey の key_id 開始位置
+ *
+ * 0-99 は初回生成時の prekey (アップロード順と一致させる)、
+ * 1000 以降は補充した prekey 用的。
+ */
+const REPLENISHED_PREKEY_ID_BASE = 1000;
+
+/** signed prekey の ID (PreKeyBundle の signed_pre_key_id と一致させる) */
+const SIGNED_PREKEY_ID = 1;
 
 /** 公開鍵を base64 文字列に変換 */
 function publicKeyToBase64(publicKey: PublicKey): string {
@@ -42,54 +51,33 @@ function privateKeyToBase64(privateKey: PrivateKey): string {
   return bytesToBase64(privateKey.serialize());
 }
 
-/** base64 を PrivateKey に変換 */
-function base64ToPrivateKey(base64: string): PrivateKey {
-  return PrivateKey.deserialize(fromBase64(base64));
-}
-
 /** base64 を PublicKey に変換 */
 function base64ToPublicKey(base64: string): PublicKey {
-  return PublicKey.deserialize(fromBase64(base64));
+  return PublicKey.deserialize(base64ToBytes(base64));
 }
 
-/** バイト配列を base64 文字列に変換 */
-function bytesToBase64(bytes: Buffer): string {
-  return bytes.toString('base64');
-}
-
-/** base64 を Uint8Array に変換 */
-function fromBase64(base64: string): Buffer {
-  return Buffer.from(base64, 'base64');
-}
-
-/** 署名用ヘルパー: IdentityKey で SignedPreKey に署名 */
-async function signWithIdentityKey(
-  identityKeyPrivate: PrivateKey,
-  data: Buffer
-): Promise<Buffer> {
-  const signature = identityKeyPrivate.sign(data);
-  return signature;
+/** base64 を PrivateKey に変換 */
+function base64ToPrivateKey(base64: string): PrivateKey {
+  return PrivateKey.deserialize(base64ToBytes(base64));
 }
 
 /** デバイス鍵バンドル生成 (初回セットアップ時) */
-export async function generateDeviceKeys(deviceName?: string): Promise<DeviceKeyBundle> {
+export async function generateDeviceKeys(): Promise<DeviceKeyBundle> {
   console.log('[DeviceKeys] Generating new device key bundle...');
-  
-  const identityKeyPair = IdentityKeyPair.generate();
-  const identityKeyPrivate = privateKeyToBase64(identityKeyPair.privateKey);
-  const identityKeyPublic = publicKeyToBase64(identityKeyPair.publicKey);
-  
+
+  const identityKeyPair = PrivateKey.generate();
+  const identityKeyPrivate = privateKeyToBase64(identityKeyPair);
+  const identityKeyPublic = publicKeyToBase64(identityKeyPair.getPublicKey());
+
   const signedPreKeyPair = PrivateKey.generate();
   const signedPreKeyPrivate = privateKeyToBase64(signedPreKeyPair);
   const signedPreKeyPublic = publicKeyToBase64(signedPreKeyPair.getPublicKey());
-  
-  const preKeySignatureBytes = await signWithIdentityKey(
-    identityKeyPair.privateKey,
-    signedPreKeyPair.getPublicKey().serialize()
-  );
+
+  // signed prekey は identity key で XEdDSA 署名する
+  const preKeySignatureBytes = identityKeyPair.sign(signedPreKeyPair.getPublicKey().serialize());
   const preKeySignature = bytesToBase64(preKeySignatureBytes);
-  
-  const oneTimePreKeys: Array<{ privateKey: string; publicKey: string; used: boolean }> = [];
+
+  const oneTimePreKeys: { privateKey: string; publicKey: string; used: boolean }[] = [];
   for (let i = 0; i < ONETIME_PREKEY_COUNT; i++) {
     const preKeyPair = PrivateKey.generate();
     oneTimePreKeys.push({
@@ -98,7 +86,7 @@ export async function generateDeviceKeys(deviceName?: string): Promise<DeviceKey
       used: false,
     });
   }
-  
+
   const bundle: DeviceKeyBundle = {
     identityKeyPrivate,
     identityKeyPublic,
@@ -107,11 +95,19 @@ export async function generateDeviceKeys(deviceName?: string): Promise<DeviceKey
     preKeySignature,
     oneTimePreKeys,
   };
-  
+
   await saveDeviceKeys(bundle);
-  
-  const registrationId = Math.floor(Math.random() * 16380) + 1;
-  
+
+  // ローカル DB にミラーする (受信側で prekey / signed prekey を解決するため)
+  await storeSignedPreKey(SIGNED_PREKEY_ID, {
+    privateKey: signedPreKeyPair,
+    publicKey: signedPreKeyPair.getPublicKey(),
+    signature: preKeySignatureBytes,
+  });
+  for (let i = 0; i < oneTimePreKeys.length; i++) {
+    await storePreKey(i, base64ToPrivateKey(oneTimePreKeys[i].privateKey));
+  }
+
   console.log('[DeviceKeys] Device keys generated and saved locally');
   return bundle;
 }
@@ -134,6 +130,9 @@ export async function registerDeviceWithServer(
       preKeySignature: bundle.preKeySignature,
       oneTimePreKeys: bundle.oneTimePreKeys.map((k: { publicKey: string }) => k.publicKey),
     });
+    // サーバが発行したデバイス ID を保存する。
+    // プッシュトークンの紐付けと、鍵バンドル取得時の deviceId 指定に必須。
+    await setServerDeviceId(String(result.id));
     console.log('[DeviceKeys] Device registered with server:', result.id);
     return result;
   } catch (err) {
@@ -145,9 +144,9 @@ export async function registerDeviceWithServer(
 /** 初回セットアップ完全フロー */
 export async function runInitialDeviceSetup(deviceName?: string): Promise<boolean> {
   console.log('[DeviceKeys] Starting initial device setup...');
-  
+
   try {
-    const bundle = await generateDeviceKeys(deviceName);
+    const bundle = await generateDeviceKeys();
     const registered = await registerDeviceWithServer(bundle, deviceName);
     if (!registered) {
       throw new Error('Server registration failed');
@@ -165,7 +164,7 @@ export async function runInitialDeviceSetup(deviceName?: string): Promise<boolea
 export async function checkDeviceRegistration(): Promise<boolean> {
   const bundle = await loadExistingKeys();
   if (!bundle) return false;
-  
+
   try {
     const devices = await devicesApi.list();
     return devices.length > 0;
@@ -179,8 +178,8 @@ export async function checkAndReplenishPreKeys(): Promise<void> {
   const remaining = await getRemainingPreKeys();
   if (remaining <= PREKEY_REPLENISH_THRESHOLD) {
     console.log('[DeviceKeys] PreKeys low (' + remaining + '), replenishing...');
-    
-    const newKeys: Array<{ privateKey: string; publicKey: string }> = [];
+
+    const newKeys: { privateKey: string; publicKey: string }[] = [];
     for (let i = 0; i < PREKEY_REPLENISH_COUNT; i++) {
       const preKey = PrivateKey.generate();
       newKeys.push({
@@ -188,8 +187,14 @@ export async function checkAndReplenishPreKeys(): Promise<void> {
         publicKey: publicKeyToBase64(preKey.getPublicKey()),
       });
     }
-    
+
     await replenishPreKeys(newKeys);
+
+    // ローカル DB にもミラーする (key_id は初回分とかぶらない範囲を使う)
+    for (let i = 0; i < newKeys.length; i++) {
+      await storePreKey(REPLENISHED_PREKEY_ID_BASE + i, base64ToPrivateKey(newKeys[i].privateKey));
+    }
+
     console.log('[DeviceKeys] Replenished ' + newKeys.length + ' prekeys');
   }
 }
@@ -206,11 +211,15 @@ export async function removeDevice(deviceId: string): Promise<boolean> {
   }
 }
 
-/** Registration ID 生成・取得 */
-const REGISTRATION_ID_KEY = 'prepito.registration_id';
-
+/**
+ * Registration ID を取得 (端末ごとに固定)
+ *
+ * Signal Protocol の Registration ID はセッションの identity として使われるため、
+ * 呼び出しごとに値が変わるとセッションが継続できなくなる。
+ * 値は SecureStore に永続化される。
+ */
 export async function getOrCreateRegistrationId(): Promise<number> {
-  return Math.floor(Math.random() * 16380) + 1;
+  return getLocalRegistrationId();
 }
 
 /** デバッグ: 鍵情報表示 */
@@ -220,13 +229,18 @@ export async function debugPrintKeys(): Promise<void> {
     console.log('[DeviceKeys] No keys found');
     return;
   }
-  
+
   console.log('[DeviceKeys] Current key bundle:');
   console.log('  Identity Key (pub):', bundle.identityKeyPublic.slice(0, 20) + '...');
   console.log('  Signed PreKey (pub):', bundle.signedPreKeyPublic.slice(0, 20) + '...');
   console.log('  PreKey Signature:', bundle.preKeySignature.slice(0, 20) + '...');
-  console.log('  One-Time PreKeys:', bundle.oneTimePreKeys.length, 'total,', 
-    bundle.oneTimePreKeys.filter((k: { used: boolean }) => !k.used).length, 'unused');
+  console.log(
+    '  One-Time PreKeys:',
+    bundle.oneTimePreKeys.length,
+    'total,',
+    bundle.oneTimePreKeys.filter((k: { used: boolean }) => !k.used).length,
+    'unused'
+  );
 }
 
 /** PreKeyBundle 作成 (サーバー配布用 / X3DH) */
@@ -236,21 +250,21 @@ export async function createPreKeyBundle(
 ): Promise<PreKeyBundle> {
   const bundle = await loadExistingKeys();
   if (!bundle) throw new Error('No device keys loaded');
-  
+
   const unusedPreKeys = bundle.oneTimePreKeys.filter((k: { used: boolean }) => !k.used);
   const preKey = unusedPreKeys[0];
   if (!preKey) throw new Error('No unused prekeys available');
-  
+
   preKey.used = true;
-  
+
   return PreKeyBundle.new(
     registrationId,
     deviceId,
-    null,
+    0,
     base64ToPublicKey(preKey.publicKey),
-    1,
+    SIGNED_PREKEY_ID,
     base64ToPublicKey(bundle.signedPreKeyPublic),
-    fromBase64(bundle.preKeySignature),
+    base64ToBytes(bundle.preKeySignature),
     base64ToPublicKey(bundle.identityKeyPublic)
   );
 }
