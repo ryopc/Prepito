@@ -30,7 +30,7 @@ Repo: https://github.com/ryopc/Prepito.git
 Builds:
   - versionName: 0.0.1
     versionCode: 1
-    commit: d84b0926e7d1a5cbe5a1c5f31b4d0d4d1f0a1b2c3
+    commit: f5278245561f7eda8cc61922efb86d40c8a009b83
     sudo:
       - apt-get update
       # Node.js / npm の導入（F-Droid ビルドイメージには Node が無い）
