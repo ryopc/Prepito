@@ -68,11 +68,7 @@ export default function AppLayout() {
         options={{
           title: '連絡先',
           tabBarIcon: ({ focused, color }) => (
-            <Ionicons
-              name={focused ? 'people' : 'people-outline'}
-              size={24}
-              color={color}
-            />
+            <Ionicons name={focused ? 'people' : 'people-outline'} size={24} color={color} />
           ),
         }}
       />
@@ -81,11 +77,7 @@ export default function AppLayout() {
         options={{
           title: '設定',
           tabBarIcon: ({ focused, color }) => (
-            <Ionicons
-              name={focused ? 'settings' : 'settings-outline'}
-              size={24}
-              color={color}
-            />
+            <Ionicons name={focused ? 'settings' : 'settings-outline'} size={24} color={color} />
           ),
         }}
       />

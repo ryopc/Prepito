@@ -5,7 +5,13 @@
 
 import React, { useState } from 'react';
 import {
-  View, Text, TextInput, FlatList, TouchableOpacity, ActivityIndicator, StyleSheet,
+  View,
+  Text,
+  TextInput,
+  FlatList,
+  TouchableOpacity,
+  ActivityIndicator,
+  StyleSheet,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
@@ -18,15 +24,22 @@ const styles = StyleSheet.create({
   headerTitle: { fontSize: 20, fontWeight: '700', color: '#1e293b' },
   searchContainer: { padding: 12 },
   searchInput: {
-    backgroundColor: '#f1f5f9', borderRadius: 10, paddingHorizontal: 16,
-    paddingVertical: 10, fontSize: 16, color: '#1e293b',
+    backgroundColor: '#f1f5f9',
+    borderRadius: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    fontSize: 16,
+    color: '#1e293b',
   },
   loading: { padding: 24, justifyContent: 'center', alignItems: 'center' },
   empty: { padding: 24, alignItems: 'center' },
   emptyText: { color: '#64748b', marginTop: 12, fontSize: 16 },
   userItem: {
-    flexDirection: 'row', alignItems: 'center', padding: 16,
-    borderBottomWidth: 1, borderBottomColor: '#f1f5f9',
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
   },
   avatar: { width: 48, height: 48, borderRadius: 24, backgroundColor: '#e2e8f0' },
   avatarText: { color: '#64748b', textAlign: 'center', fontSize: 16 },
@@ -34,8 +47,12 @@ const styles = StyleSheet.create({
   userName: { fontSize: 16, fontWeight: '600', color: '#1e293b' },
   userUsername: { fontSize: 14, color: '#64748b' },
   startButton: {
-    backgroundColor: '#0ea5e9', paddingHorizontal: 16, paddingVertical: 10,
-    borderRadius: 8, alignSelf: 'flex-start', marginTop: 4,
+    backgroundColor: '#0ea5e9',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+    alignSelf: 'flex-start',
+    marginTop: 4,
   },
   startButtonText: { color: '#ffffff', fontWeight: '600', fontSize: 14 },
 });
@@ -110,10 +127,7 @@ export default function NewDM() {
           data={results}
           keyExtractor={(item) => item.id}
           renderItem={({ item }) => (
-            <TouchableOpacity
-              style={styles.userItem}
-              onPress={() => handleSelect(item)}
-            >
+            <TouchableOpacity style={styles.userItem} onPress={() => handleSelect(item)}>
               <View style={styles.avatar}>
                 <Text style={styles.avatarText}>{item.username.charAt(0).toUpperCase()}</Text>
               </View>

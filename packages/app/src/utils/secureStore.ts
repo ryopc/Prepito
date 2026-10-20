@@ -4,7 +4,6 @@
  */
 
 import * as SecureStore from 'expo-secure-store';
-import { Platform } from 'react-native';
 
 /** 利用可能かチェック */
 export async function isSecureStoreAvailable(): Promise<boolean> {
@@ -66,7 +65,7 @@ export const SecureKeys = {
   REFRESH_TOKEN: `${PREFIX}refresh_token`,
   USER_ID: `${PREFIX}user_id`,
   USERNAME: `${PREFIX}username`,
-  
+
   // Device Keys (E2E)
   IDENTITY_KEY_PRIVATE: `${PREFIX}identity_key_private`,
   IDENTITY_KEY_PUBLIC: `${PREFIX}identity_key_public`,
@@ -74,11 +73,14 @@ export const SecureKeys = {
   SIGNED_PRE_KEY_PUBLIC: `${PREFIX}signed_pre_key_public`,
   PRE_KEY_SIGNATURE: `${PREFIX}pre_key_signature`,
   ONE_TIME_PRE_KEYS: `${PREFIX}one_time_pre_keys`, // JSON array of { private, public, used }
-  
+
   // Session State (Signal Protocol)
   SESSION_STATE: `${PREFIX}session_state_`, // + conversationId
   SENDER_KEY_STATE: `${PREFIX}sender_key_state_`, // + groupId
-  
+
+  /** サーバが発行したデバイス ID（/api/devices の id） */
+  SERVER_DEVICE_ID: `${PREFIX}server_device_id`,
+
   // Settings
   APP_LOCK_ENABLED: `${PREFIX}app_lock_enabled`,
   BIOMETRIC_ENABLED: `${PREFIX}biometric_enabled`,
@@ -90,12 +92,12 @@ export const SecureKeys = {
 
 /** デバイスキー一括保存 */
 export interface DeviceKeyBundle {
-  identityKeyPrivate: string;  // base64
-  identityKeyPublic: string;   // base64
+  identityKeyPrivate: string; // base64
+  identityKeyPublic: string; // base64
   signedPreKeyPrivate: string; // base64
-  signedPreKeyPublic: string;  // base64
-  preKeySignature: string;     // base64
-  oneTimePreKeys: Array<{ privateKey: string; publicKey: string; used: boolean }>;
+  signedPreKeyPublic: string; // base64
+  preKeySignature: string; // base64
+  oneTimePreKeys: { privateKey: string; publicKey: string; used: boolean }[];
 }
 
 export async function saveDeviceKeys(bundle: DeviceKeyBundle): Promise<void> {
@@ -126,11 +128,17 @@ export async function loadDeviceKeys(): Promise<DeviceKeyBundle | null> {
       getSecureItem(SecureKeys.PRE_KEY_SIGNATURE),
       getSecureItem(SecureKeys.ONE_TIME_PRE_KEYS),
     ]);
-    
-    if (!identityKeyPrivate || !identityKeyPublic || !signedPreKeyPrivate || !signedPreKeyPublic || !preKeySignature) {
+
+    if (
+      !identityKeyPrivate ||
+      !identityKeyPublic ||
+      !signedPreKeyPrivate ||
+      !signedPreKeyPublic ||
+      !preKeySignature
+    ) {
       return null;
     }
-    
+
     return {
       identityKeyPrivate,
       identityKeyPublic,
@@ -156,16 +164,19 @@ export async function clearDeviceKeys(): Promise<void> {
 }
 
 /** 未使用 One-Time PreKey 取得・消費 */
-export async function consumeOneTimePreKey(): Promise<{ privateKey: string; publicKey: string } | null> {
+export async function consumeOneTimePreKey(): Promise<{
+  privateKey: string;
+  publicKey: string;
+} | null> {
   const bundle = await loadDeviceKeys();
   if (!bundle) return null;
-  
-  const unusedIndex = bundle.oneTimePreKeys.findIndex(k => !k.used);
+
+  const unusedIndex = bundle.oneTimePreKeys.findIndex((k) => !k.used);
   if (unusedIndex === -1) return null;
-  
+
   const key = bundle.oneTimePreKeys[unusedIndex];
   bundle.oneTimePreKeys[unusedIndex] = { ...key, used: true };
-  
+
   await setSecureItem(SecureKeys.ONE_TIME_PRE_KEYS, JSON.stringify(bundle.oneTimePreKeys));
   return { privateKey: key.privateKey, publicKey: key.publicKey };
 }
@@ -174,14 +185,44 @@ export async function consumeOneTimePreKey(): Promise<{ privateKey: string; publ
 export async function getRemainingPreKeys(): Promise<number> {
   const bundle = await loadDeviceKeys();
   if (!bundle) return 0;
-  return bundle.oneTimePreKeys.filter(k => !k.used).length;
+  return bundle.oneTimePreKeys.filter((k) => !k.used).length;
 }
 
 /** One-Time PreKey 補充 (閾値下回った時に呼ぶ) */
-export async function replenishPreKeys(newKeys: Array<{ privateKey: string; publicKey: string }>): Promise<void> {
+export async function replenishPreKeys(
+  newKeys: { privateKey: string; publicKey: string }[]
+): Promise<void> {
   const bundle = await loadDeviceKeys();
   if (!bundle) return;
-  
-  bundle.oneTimePreKeys.push(...newKeys.map(k => ({ ...k, used: false })));
+
+  bundle.oneTimePreKeys.push(...newKeys.map((k) => ({ ...k, used: false })));
   await setSecureItem(SecureKeys.ONE_TIME_PRE_KEYS, JSON.stringify(bundle.oneTimePreKeys));
+}
+
+/* =====================================================================
+   サーバ発行デバイス ID
+   ===================================================================== */
+
+/**
+ * サーバが発行したデバイス ID（`POST /api/devices` の `id`）を取得する
+ *
+ * - プッシュトークンの紐付け（`POST /api/users/me/push-token` の deviceId）
+ * - 鍵バンドル取得（`GET /api/keys/bundle/:userId?deviceId=`）に必須
+ */
+export async function getServerDeviceId(): Promise<string | null> {
+  try {
+    return await getSecureItem(SecureKeys.SERVER_DEVICE_ID);
+  } catch {
+    return null;
+  }
+}
+
+/** サーバが発行したデバイス ID を保存する */
+export async function setServerDeviceId(deviceId: string): Promise<void> {
+  await setSecureItem(SecureKeys.SERVER_DEVICE_ID, deviceId);
+}
+
+/** サーバが発行したデバイス ID を削除する（ログアウト時） */
+export async function clearServerDeviceId(): Promise<void> {
+  await deleteSecureItem(SecureKeys.SERVER_DEVICE_ID);
 }

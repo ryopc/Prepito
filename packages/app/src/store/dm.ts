@@ -9,16 +9,8 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import * as SecureStore from 'expo-secure-store';
-import {
-  sendDM,
-  receiveDM,
-  buildOutgoingPayload,
-  getConversationId,
-  type DecryptedDM,
-  type RawDMMessage,
-  type SendDMPayload,
-} from '@/services/dm';
-import { usersApi, dmsApi } from '@/services/api';
+import { sendDM, receiveDM, type RawDMMessage } from '@/services/dm';
+import { dmsApi } from '@/services/api';
 import { useAuthStore } from './auth';
 import {
   saveMessage,
@@ -31,13 +23,25 @@ import {
 /** SecureStore アダプター */
 const secureStoreAdapter = {
   getItem: async (name: string): Promise<string | null> => {
-    try { return await SecureStore.getItemAsync(name); } catch { return null; }
+    try {
+      return await SecureStore.getItemAsync(name);
+    } catch {
+      return null;
+    }
   },
   setItem: async (name: string, value: string): Promise<void> => {
-    try { await SecureStore.setItemAsync(name, value); } catch {}
+    try {
+      await SecureStore.setItemAsync(name, value);
+    } catch {
+      // 保存失敗は無視 (メモリ上の状態のみを保つ)
+    }
   },
   removeItem: async (name: string): Promise<void> => {
-    try { await SecureStore.deleteItemAsync(name); } catch {}
+    try {
+      await SecureStore.deleteItemAsync(name);
+    } catch {
+      // 削除失敗は無視
+    }
   },
 };
 
@@ -66,6 +70,13 @@ export interface DMMessage {
   status: 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
   createdAt: string;
   localId: string; // 楽観的UI用
+  /**
+   * 復号に失敗したメッセージか
+   *
+   * Signal Protocol のセッション再確立前のメッセージなど、
+   * 復号できない場合にも「届いたことは分かる」ようプレースホルダを保持する。
+   */
+  decryptionFailed?: boolean;
 }
 
 /** 状態 */
@@ -86,7 +97,7 @@ interface DMState {
   fetchThreads: () => Promise<void>;
   fetchMessages: (conversationId: string, otherUserId: string) => Promise<void>;
   sendMessage: (conversationId: string, recipientId: string, plaintext: string) => Promise<void>;
-  receiveMessage: (raw: RawDMMessage, senderPublicKeyBase64: string) => Promise<void>;
+  receiveMessage: (raw: RawDMMessage, senderPublicKeyHex: string | null) => Promise<void>;
   setActiveConversation: (conversationId: string | null) => void;
   markAsRead: (conversationId: string) => Promise<void>;
   setError: (error: string | null) => void;
@@ -138,7 +149,7 @@ export const useDMStore = create<DMState>()(
       },
 
       // メッセージ履歴取得 (DB優先、サーバーAPIとの併用)
-      fetchMessages: async (conversationId: string, otherUserId: string) => {
+      fetchMessages: async (conversationId: string, _otherUserId: string) => {
         set({ messagesLoading: true, error: null, activeConversationId: conversationId });
         try {
           const { user } = useAuthStore.getState();
@@ -232,12 +243,41 @@ export const useDMStore = create<DMState>()(
       },
 
       // メッセージ受信 (プッシュ/WebSocket 経由)
-      receiveMessage: async (raw: RawDMMessage, senderPublicKeyBase64: string) => {
+      receiveMessage: async (raw: RawDMMessage, senderPublicKeyHex: string | null) => {
         const { user } = useAuthStore.getState();
-        if (!user) return;
 
-        const decrypted = await receiveDM(raw, senderPublicKeyBase64, user.id);
-        if (!decrypted) return;
+        // 重複排除 (WebSocket とプッシュ通知の双重経路で到達しうる)
+        if (get().messages.some((m) => m.id === raw.id)) return;
+
+        // NOTE: プロフィール取得（GET /api/users/me）が未実装のサーバでも
+        // メッセージを受信できるよう、user は任意とする。
+        const decrypted = await receiveDM(raw, senderPublicKeyHex, user?.id ?? '');
+
+        // 復号に失敗した場合でも「届いた」ことは伝える。
+        // Signal Protocol のセッション再確立前のメッセージは復号できないが、
+        // サイレントに消すとユーザに伝わらないためプレースホルダを保持する。
+        if (!decrypted) {
+          const failedMessage: DMMessage = {
+            id: raw.id,
+            conversationId: raw.from.id,
+            fromUserId: raw.from.id,
+            fromUsername: raw.from.username,
+            fromDisplayName: raw.from.displayName,
+            plaintext: '',
+            isRead: raw.isRead,
+            isOutgoing: false,
+            status: 'read',
+            createdAt: raw.createdAt,
+            localId: `local-${raw.id}`,
+            decryptionFailed: true,
+          };
+
+          set((state) => ({
+            messages: [...state.messages, failedMessage],
+            unreadCount: state.unreadCount + 1,
+          }));
+          return;
+        }
 
         const localId = `local-${decrypted.id}`;
         const message: DMMessage = {
@@ -273,7 +313,12 @@ export const useDMStore = create<DMState>()(
           // スレッドの未読数更新
           threads: state.threads.map((t) =>
             t.conversationId === decrypted.conversationId
-              ? { ...t, unreadCount: t.unreadCount + 1, lastMessage: decrypted.plaintext, lastMessageAt: decrypted.createdAt }
+              ? {
+                  ...t,
+                  unreadCount: t.unreadCount + 1,
+                  lastMessage: decrypted.plaintext,
+                  lastMessageAt: decrypted.createdAt,
+                }
               : t
           ),
         }));
@@ -285,10 +330,20 @@ export const useDMStore = create<DMState>()(
 
       // 既読マーク
       markAsRead: async (conversationId: string) => {
-        // API 呼び出し (markRead) と DB 更新
-        await dmsApi.markRead(conversationId).catch(() => {});
+        // サーバの既読エンドポイントは **DM（メッセージ）ID** を要求する
+        // (PUT /api/dms/:dmId/read)。会話 ID を渡すと 400 になるため、
+        // 会話内の未読メッセージごとに呼び出す。
+        const { messages } = get();
+        const unreadIncoming = messages.filter(
+          (m) => m.conversationId === conversationId && !m.isOutgoing && !m.isRead
+        );
+        await Promise.all(unreadIncoming.map((m) => dmsApi.markRead(m.id).catch(() => {})));
+
         await markMessagesRead(conversationId, 'dm');
         set((state) => ({
+          messages: state.messages.map((m) =>
+            m.conversationId === conversationId && !m.isOutgoing ? { ...m, isRead: true } : m
+          ),
           threads: state.threads.map((t) =>
             t.conversationId === conversationId ? { ...t, unreadCount: 0 } : t
           ),
@@ -323,7 +378,7 @@ export const useDMStore = create<DMState>()(
     {
       name: 'prepito-dm',
       storage: createJSONStorage(() => secureStoreAdapter),
-      partialize: (state) => ({
+      partialize: () => ({
         // 永続化しない (メッセージは機密のためメモリのみ、またはDBに保存)
       }),
     }
@@ -333,24 +388,60 @@ export const useDMStore = create<DMState>()(
 /** 便利フック */
 export function useDM() {
   const {
-    threads, threadsLoading, activeConversationId, messages,
-    messagesLoading, unreadCount, error,
-    fetchThreads, fetchMessages, sendMessage, receiveMessage,
-    setActiveConversation, markAsRead, setError, clearError,
+    threads,
+    threadsLoading,
+    activeConversationId,
+    messages,
+    messagesLoading,
+    unreadCount,
+    error,
+    fetchThreads,
+    fetchMessages,
+    sendMessage,
+    receiveMessage,
+    setActiveConversation,
+    markAsRead,
+    setError,
+    clearError,
   } = useDMStore();
   return {
-    threads, threadsLoading, activeConversationId, messages,
-    messagesLoading, unreadCount, error,
-    fetchThreads, fetchMessages, sendMessage, receiveMessage,
-    setActiveConversation, markAsRead, setError, clearError,
+    threads,
+    threadsLoading,
+    activeConversationId,
+    messages,
+    messagesLoading,
+    unreadCount,
+    error,
+    fetchThreads,
+    fetchMessages,
+    sendMessage,
+    receiveMessage,
+    setActiveConversation,
+    markAsRead,
+    setError,
+    clearError,
   };
 }
 
 export function useDMActions() {
   const {
-    fetchThreads, fetchMessages, sendMessage, receiveMessage,
-    setActiveConversation, markAsRead, setError, clearError,
+    fetchThreads,
+    fetchMessages,
+    sendMessage,
+    receiveMessage,
+    setActiveConversation,
+    markAsRead,
+    setError,
+    clearError,
   } = useDMStore();
-  return { fetchThreads, fetchMessages, sendMessage, receiveMessage,
-    setActiveConversation, markAsRead, setError, clearError };
+  return {
+    fetchThreads,
+    fetchMessages,
+    sendMessage,
+    receiveMessage,
+    setActiveConversation,
+    markAsRead,
+    setError,
+    clearError,
+  };
 }

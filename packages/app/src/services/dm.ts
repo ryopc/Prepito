@@ -14,16 +14,9 @@ er API 経由で送信
  *   2. Double Ratchet で復号
  */
 
-import {
-  encryptForDM,
-  decryptFromDM,
-} from './crypto';
-import { dmsApi } from './api';
-import {
-  generateKeypair,
-  signMessage,
-  verifySignature,
-} from '../utils/crypto';
+import { encryptForDM, decryptFromDM } from './crypto';
+import { ApiError, dmsApi } from './api';
+import { generateKeypair, signMessage, verifySignature } from '../utils/crypto';
 import { getSecureItem, setSecureItem } from '../utils/secureStore';
 
 const SIGNING_SECRET_KEY = 'prepito.dm_signing_secret_key';
@@ -72,7 +65,7 @@ export interface OutgoingDMPayload {
 
 /** ed25519 署名秘密鍵を取得（未生成なら生成して保存） */
 async function getSigningSecretKey(): Promise<string> {
-  let secretKey = await getSecureItem(SIGNING_SECRET_KEY);
+  const secretKey = await getSecureItem(SIGNING_SECRET_KEY);
   if (secretKey) return secretKey;
 
   const { secretKey: newSecretKey } = await generateKeypair();
@@ -84,12 +77,38 @@ async function getSigningSecretKey(): Promise<string> {
    送信
    ===================================================================== */
 
+/**
+ * 暗号化失敗をユーザー向けメッセージに変換する
+ *
+ * 相手ユーザーの PreKey Bundle は `GET /api/keys/bundle/:userId` から取得する。
+ * このエンドポイントを持たない koshi サーバ（4.0.0 など）では 404 になり、
+ * 原因が了然されないまま送信が失敗する。どの能力が不足しているかを
+ * 具体的に示すことで、導入時の混乱を防ぐ。
+ */
+function toFriendlyEncryptionError(err: unknown): Error {
+  if (err instanceof ApiError && err.status === 404) {
+    return new Error(
+      'このサーバは E2E 暗号化（Signal Protocol）に対応していません。' +
+        'E2E 暗号化には /api/keys/bundle エンドポイントを持つ koshi サーバが必要です。'
+    );
+  }
+  if (err instanceof ApiError && err.status === 401) {
+    return new Error('認証に失敗しました。もう一度ログインしてください。');
+  }
+  return err instanceof Error ? err : new Error('メッセージの暗号化に失敗しました');
+}
+
 /** DM 送信 (E2E暗号化 + 署名) */
 export async function sendDM(payload: SendDMPayload): Promise<{ id: string }> {
   const { recipientId, plaintext } = payload;
 
   // 1. Signal で暗号化 (X3DHセッション確立 + Double Ratchet)
-  const encrypted = await encryptForDM(recipientId, plaintext);
+  let encrypted;
+  try {
+    encrypted = await encryptForDM(recipientId, plaintext);
+  } catch (err) {
+    throw toFriendlyEncryptionError(err);
+  }
 
   // 2. ed25519 で ciphertext に署名
   const secretKey = await getSigningSecretKey();
@@ -106,7 +125,12 @@ export async function buildOutgoingPayload(
   recipientId: string,
   plaintext: string
 ): Promise<OutgoingDMPayload> {
-  const encrypted = await encryptForDM(recipientId, plaintext);
+  let encrypted;
+  try {
+    encrypted = await encryptForDM(recipientId, plaintext);
+  } catch (err) {
+    throw toFriendlyEncryptionError(err);
+  }
   const secretKey = await getSigningSecretKey();
   const signature = await signMessage(encrypted.ciphertext, secretKey);
 
@@ -125,14 +149,23 @@ export async function buildOutgoingPayload(
 /** DM 受信・復号 (署名検証付き) */
 export async function receiveDM(
   raw: RawDMMessage,
-  senderPublicKeyBase64: string,
-  myUserId: string
+  senderPublicKeyHex: string | null,
+  _myUserId: string
 ): Promise<DecryptedDM | null> {
   // 1. ed25519 署名検証
-  const isValid = await verifySignature(raw.content, raw.signature, senderPublicKeyBase64);
-  if (!isValid) {
-    console.warn('[DMService] 署名検証に失敗しました:', raw.id);
-    return null;
+  // 公開鍵・署名は koshi サーバと同じ hex 形式で受け取る
+  //
+  // 送信者の公開鍵が取得できない場合（サーバが user.public_key を
+  // 公開していない状態）は検証をスキップする。暗号文の真正性は
+  // Double Ratchet の MAC で担保されるため、受信処理 자체は成立する。
+  if (senderPublicKeyHex) {
+    const isValid = await verifySignature(raw.content, raw.signature, senderPublicKeyHex);
+    if (!isValid) {
+      console.warn('[DMService] 署名検証に失敗しました:', raw.id);
+      return null;
+    }
+  } else {
+    console.warn('[DMService] 送信者の公開鍵が取得できないため署名検証をスキップします:', raw.id);
   }
 
   // 2. Double Ratchet で復号

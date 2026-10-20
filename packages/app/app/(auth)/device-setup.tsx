@@ -4,16 +4,20 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuthStore } from '@/store/auth';
-import { runInitialDeviceSetup, checkDeviceRegistration, debugPrintKeys } from '@/services/crypto/device-keys';
+import {
+  runInitialDeviceSetup,
+  checkDeviceRegistration,
+  debugPrintKeys,
+} from '@/services/crypto/device-keys';
 import { styles } from './authStyles';
 
 export default function DeviceSetupScreen() {
   const router = useRouter();
   const { setDeviceRegistered, setDeviceSetupComplete, isAuthenticated } = useAuthStore();
-  
+
   const [step, setStep] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
@@ -21,9 +25,20 @@ export default function DeviceSetupScreen() {
   const [progress, setProgress] = useState(0);
 
   const steps = [
-    { title: '暗号鍵の生成', description: 'このデバイス専用の公開鍵・秘密鍵ペアを生成します。秘密鍵はこのデバイスから決して出ません。' },
-    { title: '鍵のサーバー登録', description: '公開鍵のみをサーバーに登録し、他のユーザーがあなたと暗号化通信できるようにします。' },
-    { title: 'セットアップ完了', description: 'E2E暗号化の準備が完了しました。チャットを始めましょう。' },
+    {
+      title: '暗号鍵の生成',
+      description:
+        'このデバイス専用の公開鍵・秘密鍵ペアを生成します。秘密鍵はこのデバイスから決して出ません。',
+    },
+    {
+      title: '鍵のサーバー登録',
+      description:
+        '公開鍵のみをサーバーに登録し、他のユーザーがあなたと暗号化通信できるようにします。',
+    },
+    {
+      title: 'セットアップ完了',
+      description: 'E2E暗号化の準備が完了しました。チャットを始めましょう。',
+    },
   ];
 
   const handleSetup = useCallback(async () => {
@@ -32,29 +47,26 @@ export default function DeviceSetupScreen() {
       setStep(1);
       return;
     }
-    
+
     if (step === 1) {
       setIsLoading(true);
       setError('');
       setProgress(10);
-      
+
       try {
-        // 進捗更新
-        const updateProgress = (p: number) => setProgress(p);
-        
         // 実際のセットアップ実行
         const success = await runInitialDeviceSetup(deviceName.trim() || undefined);
-        
+
         if (success) {
           setProgress(100);
           await setDeviceRegistered(true);
           await setDeviceSetupComplete(true);
-          
+
           // デバッグ出力
           await debugPrintKeys();
-          
+
           setStep(2);
-          
+
           // 少し待ってからチャット画面へ
           setTimeout(() => {
             router.replace('/(app)/chats');
@@ -95,7 +107,7 @@ export default function DeviceSetupScreen() {
   // 既にデバイス登録済みならスキップ
   useEffect(() => {
     if (isAuthenticated) {
-      checkDeviceRegistration().then(registered => {
+      checkDeviceRegistration().then((registered) => {
         if (registered) {
           router.replace('/(app)/chats');
         }
@@ -111,12 +123,7 @@ export default function DeviceSetupScreen() {
         {/* Progress Indicator */}
         <View style={styles.progressContainer}>
           <View style={styles.progressBar}>
-            <View
-              style={[
-                styles.progressFill,
-                { width: `${Math.min(progress, 100)}%` }
-              ]}
-            />
+            <View style={[styles.progressFill, { width: `${Math.min(progress, 100)}%` }]} />
           </View>
           <Text style={styles.progressText}>
             Step {step + 1} / {steps.length}
@@ -197,10 +204,7 @@ export default function DeviceSetupScreen() {
         )}
 
         {step === 1 && !isLoading && (
-          <TouchableOpacity
-            style={[styles.button, styles.buttonPrimary]}
-            onPress={handleSetup}
-          >
+          <TouchableOpacity style={[styles.button, styles.buttonPrimary]} onPress={handleSetup}>
             <Text style={styles.buttonText}>セットアップ開始</Text>
           </TouchableOpacity>
         )}
@@ -215,19 +219,13 @@ export default function DeviceSetupScreen() {
         )}
 
         {step < 2 && (
-          <TouchableOpacity
-            style={styles.button}
-            onPress={handleSkip}
-            disabled={isLoading}
-          >
+          <TouchableOpacity style={styles.button} onPress={handleSkip} disabled={isLoading}>
             <Text style={[styles.buttonText, styles.buttonTextSecondary]}>スキップ</Text>
           </TouchableOpacity>
         )}
       </View>
 
-      <Text style={styles.footer}>
-        E2E暗号化 • Signal Protocol (X3DH + Double Ratchet)
-      </Text>
+      <Text style={styles.footer}>E2E暗号化 • Signal Protocol (X3DH + Double Ratchet)</Text>
     </View>
   );
 }

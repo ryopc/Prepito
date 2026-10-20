@@ -5,7 +5,13 @@
 
 import React, { useEffect } from 'react';
 import {
-  View, Text, FlatList, TouchableOpacity, ActivityIndicator, StyleSheet, Alert,
+  View,
+  Text,
+  FlatList,
+  TouchableOpacity,
+  ActivityIndicator,
+  StyleSheet,
+  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
@@ -14,7 +20,12 @@ import { useAuthStore } from '@/store/auth';
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f8fafc' },
-  header: { padding: 20, borderBottomWidth: 1, borderBottomColor: '#e2e8f0', backgroundColor: '#ffffff' },
+  header: {
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e2e8f0',
+    backgroundColor: '#ffffff',
+  },
   headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   title: { fontSize: 24, fontWeight: '700', color: '#1e293b' },
   subtitle: { fontSize: 14, color: '#64748b', marginTop: 4 },
@@ -25,27 +36,55 @@ const styles = StyleSheet.create({
   emptyTitle: { fontSize: 20, fontWeight: '600', color: '#1e293b', marginBottom: 8 },
   emptyDescription: { fontSize: 16, color: '#64748b', textAlign: 'center', lineHeight: 24 },
   threadItem: {
-    flexDirection: 'row', alignItems: 'center', padding: 16,
-    borderBottomWidth: 1, borderBottomColor: '#f1f5f9', backgroundColor: '#ffffff',
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+    backgroundColor: '#ffffff',
   },
   avatar: { width: 52, height: 52, borderRadius: 26, backgroundColor: '#e2e8f0' },
   avatarText: { color: '#64748b', textAlign: 'center', fontSize: 18 },
   threadInfo: { flex: 1, marginLeft: 12 },
-  threadHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
+  threadHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
   threadName: { fontSize: 16, fontWeight: '600', color: '#1e293b' },
   unreadBadge: {
-    backgroundColor: '#0ea5e9', borderRadius: 12, paddingHorizontal: 8, paddingVertical: 2,
-    minWidth: 24, alignItems: 'center',
+    backgroundColor: '#0ea5e9',
+    borderRadius: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    minWidth: 24,
+    alignItems: 'center',
   },
   unreadBadgeText: { color: '#ffffff', fontSize: 12, fontWeight: '700' },
-  threadPreview: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 2 },
+  threadPreview: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 2,
+  },
   previewText: { fontSize: 14, color: '#64748b' },
   previewTime: { fontSize: 12, color: '#94a3b8' },
   fab: {
-    position: 'absolute', right: 24, bottom: 24,
-    width: 56, height: 56, borderRadius: 28, backgroundColor: '#0ea5e9',
-    justifyContent: 'center', alignItems: 'center', elevation: 4,
-    shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.15, shadowRadius: 8,
+    position: 'absolute',
+    right: 24,
+    bottom: 24,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#0ea5e9',
+    justifyContent: 'center',
+    alignItems: 'center',
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
   },
   loading: { padding: 24, justifyContent: 'center', alignItems: 'center' },
 });
@@ -55,8 +94,14 @@ export default function ChatsScreen() {
   const { user } = useAuthStore();
 
   const {
-    threads, threadsLoading, unreadCount,
-    fetchThreads, markAsRead, setActiveConversation, error, clearError,
+    threads,
+    threadsLoading,
+    unreadCount,
+    fetchThreads,
+    markAsRead,
+    setActiveConversation,
+    error,
+    clearError,
   } = useDMStore();
 
   useEffect(() => {
@@ -75,8 +120,11 @@ export default function ChatsScreen() {
     router.push(`/(app)/chats/${threadId}`);
   };
 
-  const renderItem = ({ item }: { item: typeof threads[number] }) => (
-    <TouchableOpacity style={styles.threadItem} onPress={() => handleThreadPress(item.conversationId)}>
+  const renderItem = ({ item }: { item: (typeof threads)[number] }) => (
+    <TouchableOpacity
+      style={styles.threadItem}
+      onPress={() => handleThreadPress(item.conversationId)}
+    >
       <View style={styles.avatar}>
         {item.otherAvatarUrl ? (
           // TODO: 画像コンポーネント
@@ -99,7 +147,12 @@ export default function ChatsScreen() {
             {item.lastMessage ? item.lastMessage.slice(0, 60) : 'メッセージを送信してください'}
           </Text>
           <Text style={styles.previewTime}>
-            {item.lastMessageAt ? new Date(item.lastMessageAt).toLocaleDateString('ja-JP', { month: '2-digit', day: '2-digit' }) : ''}
+            {item.lastMessageAt
+              ? new Date(item.lastMessageAt).toLocaleDateString('ja-JP', {
+                  month: '2-digit',
+                  day: '2-digit',
+                })
+              : ''}
           </Text>
         </View>
       </View>
@@ -118,9 +171,7 @@ export default function ChatsScreen() {
         <View style={styles.headerRow}>
           <View>
             <Text style={styles.title}>チャット</Text>
-            <Text style={styles.subtitle}>
-              {unreadCount > 0 ? `未読 ${unreadCount}件` : ''}
-            </Text>
+            <Text style={styles.subtitle}>{unreadCount > 0 ? `未読 ${unreadCount}件` : ''}</Text>
           </View>
           <Ionicons name="refresh-outline" size={24} color="#64748b" onPress={fetchThreads} />
         </View>

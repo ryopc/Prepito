@@ -16,13 +16,38 @@ const styles = StyleSheet.create({
   emptyIcon: { fontSize: 64, marginBottom: 16 },
   emptyTitle: { fontSize: 20, fontWeight: '600', color: '#1e293b', marginBottom: 8 },
   emptyDescription: { fontSize: 16, color: '#64748b', textAlign: 'center', lineHeight: 24 },
-  contactItem: { flexDirection: 'row', alignItems: 'center', padding: 16, borderBottomWidth: 1, borderBottomColor: '#e2e8f0' },
-  avatar: { width: 48, height: 48, borderRadius: 24, backgroundColor: '#dbeafe', justifyContent: 'center', alignItems: 'center', marginRight: 12 },
+  contactItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e2e8f0',
+  },
+  avatar: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#dbeafe',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
   avatarText: { fontSize: 18, fontWeight: '600', color: '#0ea5e9' },
   contactInfo: { flex: 1 },
   contactName: { fontSize: 16, fontWeight: '600', color: '#1e293b' },
   contactUsername: { fontSize: 14, color: '#64748b', marginTop: 2 },
-  fab: { position: 'absolute', right: 24, bottom: 24, width: 56, height: 56, borderRadius: 28, backgroundColor: '#0ea5e9', justifyContent: 'center', alignItems: 'center', elevation: 4 },
+  fab: {
+    position: 'absolute',
+    right: 24,
+    bottom: 24,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#0ea5e9',
+    justifyContent: 'center',
+    alignItems: 'center',
+    elevation: 4,
+  },
 });
 
 const MOCK_CONTACTS = [
@@ -42,11 +67,16 @@ export default function ContactsScreen() {
 
       <FlatList
         data={MOCK_CONTACTS}
-        keyExtractor={item => item.id}
+        keyExtractor={(item) => item.id}
         renderItem={({ item }) => (
-          <TouchableOpacity style={styles.contactItem} onPress={() => router.push(`/(app)/contacts/${item.id}`)}>
+          <TouchableOpacity
+            style={styles.contactItem}
+            onPress={() => router.push(`/(app)/contacts/${item.id}`)}
+          >
             <View style={styles.avatar}>
-              <Text style={styles.avatarText}>{item.displayName?.[0] || item.username[0].toUpperCase()}</Text>
+              <Text style={styles.avatarText}>
+                {item.displayName?.[0] || item.username[0].toUpperCase()}
+              </Text>
             </View>
             <View style={styles.contactInfo}>
               <Text style={styles.contactName}>{item.displayName || item.username}</Text>
@@ -59,9 +89,7 @@ export default function ContactsScreen() {
           <View style={styles.emptyContainer}>
             <Text style={styles.emptyIcon}>👥</Text>
             <Text style={styles.emptyTitle}>連絡先がありません</Text>
-            <Text style={styles.emptyDescription}>
-              ユーザーを検索して連絡先に追加しましょう
-            </Text>
+            <Text style={styles.emptyDescription}>ユーザーを検索して連絡先に追加しましょう</Text>
           </View>
         }
       />

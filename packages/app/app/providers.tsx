@@ -12,7 +12,7 @@ const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       staleTime: 1000 * 60 * 5, // 5分
-      gcTime: 1000 * 60 * 30,   // 30分 (旧 cacheTime)
+      gcTime: 1000 * 60 * 30, // 30分 (旧 cacheTime)
       retry: 1,
       refetchOnWindowFocus: false,
       refetchOnReconnect: true,
@@ -26,9 +26,7 @@ const queryClient = new QueryClient({
 export function Providers({ children }: { children: React.ReactNode }) {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <QueryClientProvider client={queryClient}>
-        {children}
-      </QueryClientProvider>
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
     </GestureHandlerRootView>
   );
 }

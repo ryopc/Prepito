@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useCallback } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuthStore } from '@/store/auth';
 import { generateKeypair } from '@/utils/crypto';
@@ -14,27 +14,31 @@ import { styles } from './authStyles';
 
 export default function RegisterScreen() {
   const router = useRouter();
-  const { setAuth, setError, setLoading } = useAuthStore();
-  
+  const { setAuth, setError } = useAuthStore();
+
   const [username, setUsername] = useState('');
   const [isLoading, setLocalLoading] = useState(false);
   const [error, setLocalError] = useState('');
 
   const handleRegister = useCallback(async () => {
-    const trimmed = username.trim();
-    
+    // サーバはユーザー名を trim + 小文字化して保存する。
+    // クライアント側でも同じ正規化を行い、
+    // ログイン時のチャレンジ文字列（koshi:login:{username}）と一致させる。
+    const trimmed = username.trim().toLowerCase();
+
     if (!trimmed) {
       setLocalError('ユーザー名を入力してください');
       return;
     }
-    
+
     if (trimmed.length < 3 || trimmed.length > 32) {
       setLocalError('ユーザー名は3〜32文字で入力してください');
       return;
     }
-    
-    if (!/^[a-zA-Z0-9_-]+$/.test(trimmed)) {
-      setLocalError('ユーザー名は英数字、ハイフン、アンダースコアのみ使用可能です');
+
+    // サーバの検証規則（/^[a-z0-9_-]{3,32}$/）に合わせる
+    if (!/^[a-z0-9_-]+$/.test(trimmed)) {
+      setLocalError('ユーザー名は英小文字・数字・ハイフン・アンダースコアのみ使用可能です');
       return;
     }
 
@@ -45,13 +49,13 @@ export default function RegisterScreen() {
     try {
       // 1. ed25519鍵ペア生成
       const keypair = await generateKeypair();
-      
+
       // 2. 秘密鍵をローカル保存
       await setSecureItem('prepito.secret_key', keypair.secretKey);
-      
+
       // 3. サーバー登録 (公開鍵のみ送信)
       const result = await authApi.register(trimmed, keypair.publicKey);
-      
+
       // 4. 認証状態更新
       await setAuth({
         accessToken: result.token,
@@ -64,7 +68,7 @@ export default function RegisterScreen() {
       router.replace('/(auth)/device-setup');
     } catch (err) {
       let message = '登録に失敗しました';
-      
+
       if (err instanceof Error) {
         if (err.message.includes('already exists') || err.message.includes('409')) {
           message = 'このユーザー名は既に使用されています';
@@ -74,7 +78,7 @@ export default function RegisterScreen() {
           message = err.message;
         }
       }
-      
+
       setLocalError(message);
       setError(message);
     } finally {
@@ -127,18 +131,12 @@ export default function RegisterScreen() {
           <Text style={styles.dividerText}>アカウントをお持ちの方</Text>
         </View>
 
-        <TouchableOpacity
-          style={styles.button}
-          onPress={handleGoLogin}
-          disabled={isLoading}
-        >
+        <TouchableOpacity style={styles.button} onPress={handleGoLogin} disabled={isLoading}>
           <Text style={[styles.buttonText, styles.buttonTextSecondary]}>ログイン</Text>
         </TouchableOpacity>
       </View>
 
-      <Text style={styles.footer}>
-        E2E暗号化 • 非中央集権 • プライバシー重視
-      </Text>
+      <Text style={styles.footer}>E2E暗号化 • 非中央集権 • プライバシー重視</Text>
     </View>
   );
 }
