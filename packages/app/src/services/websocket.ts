@@ -5,8 +5,7 @@
 
 import { getAccessToken, getWsUrl } from './api';
 import { useAuthStore } from '@/store/auth';
-import { useDMStore } from '@/store/dm';
-import { receiveDM } from '@/services/dm';
+import { handleIncomingDM as handleIncomingDMNotification } from './notifications';
 
 let ws: WebSocket | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -68,46 +67,55 @@ function scheduleReconnect(): void {
 
 /** WebSocket メッセージ処理 */
 function handleWebSocketMessage(data: any): void {
-  switch (data.type) {
-    case 'dm':
-      handleIncomingDM(data);
+  // サーバは { type, payload } のエンベロープで送信する
+  // （koshi: wsSend -> JSON.stringify({ type, payload })）
+  const type = data?.type;
+  const payload = data?.payload ?? {};
+
+  switch (type) {
+    case 'dm_received':
+      handleIncomingDM(payload);
       break;
-    case 'typing':
-      // TODO: タイピングインジケータ
+    case 'dm_sent':
+      // 送信確認（TODO: ローカルストアの status を 'sent' へ更新）
       break;
-    case 'read_receipt':
+    case 'dm_read':
       // TODO: 既読レシート
       break;
+    case 'typing_start':
+    case 'typing_stop':
+      // TODO: タイピングインジケータ
+      break;
     default:
-      console.log('[WebSocket] Unknown message type:', data.type);
+      console.log('[WebSocket] Unknown message type:', type);
   }
 }
 
 /** 受信DMを DM Store に反映 */
-async function handleIncomingDM(data: any): Promise<void> {
-  const { conversation_id, from, content, signature, created_at, message_id } = data;
+async function handleIncomingDM(payload: any): Promise<void> {
+  // サーバの DMEvent 形状: { id, from: { id, username }, content, signature, timestamp }
+  const { id, from, content, signature, timestamp } = payload;
 
   const { user: authUser } = useAuthStore.getState();
   if (!authUser) return;
 
   // 自分宛てのメッセージのみ処理
-  if (from.id === authUser.id) return;
+  if (!from || from.id === authUser.id) return;
 
   const rawMessage = {
-    id: message_id,
+    id,
     from,
     to: { id: authUser.id, username: authUser.username },
     content,
     signature,
     isRead: false,
-    createdAt: created_at,
+    createdAt: timestamp,
   };
 
-  // 相手の公開鍵を取得して復号 (プレースホルダー: 実際には API から取得)
-  const senderPublicKeyBase64 = ''; // TODO: usersApi.getByUsername(from.username) から取得
-
-  const dmStore = useDMStore.getState();
-  await dmStore.receiveMessage(rawMessage, senderPublicKeyBase64);
+  // 復号 → ストア反映 → ローカル通知表示 の唯一 entry point。
+  // 送信者の ed25519 公開鍵の取得もここで行う
+  // （サーバが user.public_key を公開していない場合は検証をスキップする）。
+  await handleIncomingDMNotification(rawMessage);
 }
 
 /** WebSocket 切断 */

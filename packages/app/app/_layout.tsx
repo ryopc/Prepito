@@ -4,14 +4,17 @@
  */
 
 import React, { useEffect } from 'react';
-import { Stack, useRouter } from 'expo-router';
+import { ActivityIndicator, StyleSheet, View } from 'react-native';
+import { Stack } from 'expo-router';
 import { Providers } from './providers';
 import { useAuthStore } from '@/store/auth';
 import { connectWebSocket, disconnectWebSocket } from '@/services/websocket';
-import { initializeNotifications, unregisterPushTokenIfAuthenticated } from '@/services/notifications';
+import {
+  initializeNotifications,
+  unregisterPushTokenIfAuthenticated,
+} from '@/services/notifications';
 
 export default function RootLayout() {
-  const router = useRouter();
   const { isAuthenticated, isLoading, initializeAuth } = useAuthStore();
 
   useEffect(() => {
@@ -41,30 +44,43 @@ export default function RootLayout() {
 
   // 認証状態に基づくルーティング
   if (isLoading) {
+    // NOTE: 旧実装は <Stack.Screen name="splash" /> を参照していたが
+    // app/splash.tsx は存在せず、expo-router の require.context により
+    // 未定義ルート参照が発生していた。専用画面を持たせずインジケータで代替する。
     return (
-      <Stack screenOptions={{ headerShown: false }}>
-        <Stack.Screen name="splash" />
-      </Stack>
+      <Providers>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#0EA5E9" />
+        </View>
+      </Providers>
     );
   }
 
   return (
-    <Stack
-      screenOptions={{
-        headerShown: false,
-        contentStyle: { backgroundColor: '#ffffff' },
-      }}
-    >
-      {/* 認証済み: メインタブ */}
-      {isAuthenticated ? (
-        <Stack.Screen name="(app)" />
-      ) : (
-        /* 未認証: 認証スタック */
-        <Stack.Screen name="(auth)" />
-      )}
-      
-      {/* 共通モーダル等 */}
-      <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
-    </Stack>
+    <Providers>
+      <Stack
+        screenOptions={{
+          headerShown: false,
+          contentStyle: { backgroundColor: '#ffffff' },
+        }}
+      >
+        {/* 認証済み: メインタブ */}
+        {isAuthenticated ? (
+          <Stack.Screen name="(app)" />
+        ) : (
+          /* 未認証: 認証スタック */
+          <Stack.Screen name="(auth)" />
+        )}
+      </Stack>
+    </Providers>
   );
 }
+
+const styles = StyleSheet.create({
+  loadingContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#ffffff',
+  },
+});
