@@ -1,0 +1,7 @@
+Initial release.
+
+* End-to-end encrypted messaging with the Signal Protocol (X3DH + Double Ratchet)
+* Realtime one-to-one chat over WebSocket
+* Read receipts and typing indicators
+* SQLCipher-encrypted offline cache
+* Built without Google Play Services or Firebase

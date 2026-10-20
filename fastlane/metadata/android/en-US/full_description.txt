@@ -1,0 +1,26 @@
+Prepito is a privacy-focused, end-to-end encrypted messenger for the koshi platform — a self-hostable backend for chats, contacts and realtime messaging.
+
+## Privacy and security
+
+* End-to-end encryption based on the Signal Protocol (X3DH key agreement and the Double Ratchet ratchet)
+* Messages are encrypted on your device; the server only relays ciphertext
+* The local message cache is kept in a SQLCipher-encrypted SQLite database
+* No account telemetry, no analytics and no advertising SDKs
+* The F-Droid build contains no Google Play Services, no Firebase and no proprietary crash reporting
+* Push notifications are not available in the F-Droid build because they depend on Google Play Services. While the app is open, messages arrive in realtime over a WebSocket connection.
+
+## Features
+
+* One-to-one direct messages with realtime delivery
+* Read receipts and typing indicators
+* Contact list synchronised with your koshi server
+* Session management across multiple devices
+* Offline-first local caching
+
+## Requirements
+
+Prepito is a client for the koshi platform, so you need a koshi server and an account on it before you can sign in. The project README explains how to deploy one.
+
+## License
+
+Released under the MIT License. Built with Expo and React Native.

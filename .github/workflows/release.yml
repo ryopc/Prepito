@@ -10,6 +10,13 @@ on:
         description: 'Release version (e.g. 1.0.0)'
         required: false
         default: ''
+      build_mode:
+        description: 'ビルド方式 (local = ランナー上でビルド / cloud = EAS クラウドビルド)'
+        type: choice
+        options:
+          - local
+          - cloud
+        default: local
 
 permissions:
   contents: write
@@ -33,32 +40,124 @@ jobs:
           version: 9
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --recursive --frozen-lockfile
 
       - name: Typecheck (quality gate)
         run: pnpm typecheck
 
+      # EAS CLI のバージョンを固定する。
+      # ローカルビルドプラグインのバージョンは @expo/eas-build-job から導出するため、
+      # eas-cli の内部構成が変わると導出に失敗しうるため pin する。
       - name: Install EAS CLI
-        run: npm install -g eas-cli
+        run: npm install -g eas-cli@25.2.0
 
-      - name: EAS Login
-        run: eas login --token ${{ secrets.EAS_TOKEN }}
+      # EAS ローカルビルド用プラグインを事前導入する。
+      # dtrace-provider (bunyan の optional 依存) はネイティブビルドが失敗すると
+      # dtrace-provider.js が 0 バイトになり、プラグインが
+      # "dtrace.createDTraceProvider is not a function" で TypeError する。
+      # 除去すれば bunyan は既定実装へフォールバックするため、
+      # OS やツールチェーンに依存せず確実にビルドできる。
+      - name: Prepare EAS local build plugin
+        run: |
+          set -euo pipefail
+          EAS_ROOT="$(npm root -g)/eas-cli"
+          PLUGIN_VERSION="$(node -p "require('$EAS_ROOT/node_modules/@expo/eas-build-job/package.json').version" 2>/dev/null || node -p "require('$(npm root -g)/@expo/eas-build-job/package.json').version")"
+          echo "EAS local build plugin version: $PLUGIN_VERSION"
+          PLUGIN_DIR="$RUNNER_TEMP/eas-local-build-plugin"
+          mkdir -p "$PLUGIN_DIR"
+          cd "$PLUGIN_DIR"
+          npm init -y > /dev/null
+          npm install --no-save "eas-cli-local-build-plugin@$PLUGIN_VERSION"
+          find "$PLUGIN_DIR/node_modules" -type d -name 'dtrace-provider' -prune -exec rm -rf {} + 2>/dev/null || true
+          echo "EAS_LOCAL_BUILD_PLUGIN_PATH=$PLUGIN_DIR/node_modules/eas-cli-local-build-plugin/bin/run" >> "$GITHUB_ENV"
 
-      - name: EAS Build Android (release APK)
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # ローカルビルドはホストの Android SDK を直接使うため、
+      # プロジェクトが要求する NDK を明示的に導入する
+      - name: Install Android NDK
+        run: |
+          set -euo pipefail
+          SDKMANAGER="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$(command -v sdkmanager)"
+          fi
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
+          "$SDKMANAGER" "ndk;26.1.10909125"
+          "$SDKMANAGER" --list_installed | grep -q "ndk;26.1.10909125" || {
+            echo "::error::NDK 26.1.10909125 の導入に失敗しました"
+            exit 1
+          }
+          echo "ANDROID_NDK_ROOT=${ANDROID_HOME}/ndk/26.1.10909125" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=${ANDROID_HOME}/ndk/26.1.10909125" >> "$GITHUB_ENV"
+
+      # EXPO_TOKEN 環境変数を設定するだけで EAS CLI は認証される
+      # (eas login は username/password 認証専用。access token では不要)
+      - name: Verify EAS project configuration
+        working-directory: packages/app
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          PROJECT_ID=$(npx expo config --json 2>/dev/null | jq -r '.extra.eas.projectId // ""')
+          if [ -z "$PROJECT_ID" ]; then
+            echo "::error::EAS プロジェクトが未設定です。ローカルで \`EXPO_TOKEN=... eas init --force --non-interactive\` を実行し、app.config.ts の extra.eas.projectId に projectId を設定してください。"
+            exit 1
+          fi
+          echo "EAS projectId: $PROJECT_ID"
+
+      - name: Build Android APK
         id: build_android
         working-directory: packages/app
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          BUILD_MODE: ${{ github.event.inputs.build_mode || 'local' }}
         run: |
-          RESULT=$(eas build --platform android --profile production --non-interactive --json)
-          echo "$RESULT" > /tmp/eas-android.json
-          ANDROID_URL=$(echo "$RESULT" | jq -r '.artifacts[0].url // empty')
-          ANDROID_FILE=$(echo "$RESULT" | jq -r '.artifacts[0].filename // "app.apk"')
-          echo "android_url=$ANDROID_URL" >> $GITHUB_OUTPUT
-          echo "android_filename=$ANDROID_FILE" >> $GITHUB_OUTPUT
+          set -euo pipefail
+          if [ "$BUILD_MODE" = "cloud" ]; then
+            # --wait: 完了まで待ってアーティファクト URL を取得する
+            # --json : stdout に JSON のみを出力する (ログは stderr)
+            eas build \
+              --platform android \
+              --profile production \
+              --non-interactive \
+              --wait \
+              --json > /tmp/eas-android.json
+            cat /tmp/eas-android.json
+            BUILD_URL=$(jq -r '.[0].artifacts.buildUrl // empty' /tmp/eas-android.json)
+            if [ -z "$BUILD_URL" ]; then
+              echo "::error::EAS ビルドのアーティファクト URL を取得できませんでした"
+              exit 1
+            fi
+            echo "android_url=$BUILD_URL" >> "$GITHUB_OUTPUT"
+          else
+            # ローカルビルド: EAS サーバーに接続するのはプロジェクト存在確認のみ。
+            # ビルド本体はランナー上で実行されるため EAS のビルド時間を消費しない。
+            # --output は --local 専用の指定 (cwd 相対で解決されるため絶対パスを渡す)
+            eas build --local --platform android --profile production --non-interactive \
+              --output "$GITHUB_WORKSPACE/build-output/prepito-android.apk"
+            echo "android_path=$GITHUB_WORKSPACE/build-output/prepito-android.apk" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Download Android APK
+        env:
+          BUILD_MODE: ${{ github.event.inputs.build_mode || 'local' }}
+          BUILD_URL: ${{ steps.build_android.outputs.android_url }}
+          BUILD_PATH: ${{ steps.build_android.outputs.android_path }}
         run: |
-          curl -L -o Prepito-android.apk "${{ steps.build_android.outputs.android_url }}"
+          set -euo pipefail
+          if [ "$BUILD_MODE" = "cloud" ]; then
+            curl -fL -o Prepito-android.apk "$BUILD_URL"
+          else
+            cp "$BUILD_PATH" Prepito-android.apk
+          fi
           ls -lh Prepito-android.apk
+          # APK の健全性確認 (zip ヘッダ確認)
+          unzip -l Prepito-android.apk > /dev/null
 
       - name: Determine release tag and version
         id: tag
@@ -99,6 +198,7 @@ jobs:
             ### ビルド情報
 
             - プラットフォーム: Android (APK)
+            - ビルド方式: ${{ github.event.inputs.build_mode || 'local' }}
             - 暗号化: SQLite + SQLCipher (ローカルDB), Signal Protocol (E2E)
           draft: false
           prerelease: false

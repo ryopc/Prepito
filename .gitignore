@@ -11,6 +11,13 @@ build/
 # Expo
 .expo/
 expo-env.d.ts
+# expo prebuild で生成されるネイティブプロジェクト (CI でのみ生成する)
+# 注意: ルート起点に固定する。 broadening すると
+# fastlane/metadata/android/ (F-Droid 掲載用メタデータ) まで除外されてしまう。
+/ios/
+/packages/app/ios/
+/android/
+/packages/app/android/
 
 # IDE
 .idea/
@@ -48,4 +55,12 @@ tmp/
 credentials.json
 
 # Patches
-patches/
+# patches/ は pnpm の patchedDependencies 用にコミット対象とする
+# （Gradle 8.0 で削除された API の回避パッチを含むため必須）
+
+# F-Droid ビルド時に生成するビルドフラグファイル（コミットしない）
+.build-flags.json
+
+# Python
+__pycache__/
+*.py[cod]

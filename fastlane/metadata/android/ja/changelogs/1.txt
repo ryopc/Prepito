@@ -1,0 +1,7 @@
+初回リリース。
+
+* Signal Protocol（X3DH + Double Ratchet）によるエンドツーエンド暗号化メッセージ
+* WebSocket によるリアルタイム 1:1 チャット
+* 既読通知と入力中表示
+* SQLCipher で暗号化されたオフラインキャッシュ
+* Google Play Services / Firebase を含まないビルド

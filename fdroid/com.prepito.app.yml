@@ -1,0 +1,112 @@
+# F-Droid 提出用ビルドレシピ（fdroiddata リポジトリの metadata/com.prepito.app.yml に転記して使用）
+#
+# 参考:
+#   - 公式 React Native テンプレート
+#     https://gitlab.com/fdroid/fdroiddata/-/blob/master/templates/build-react-native.yml
+#   - Expo アプリの 2026 年の実例（fdroiddata MR !41677 / PsyMap）
+#
+# 前提:
+#   - リポジトリは pnpm モノレポ。pnpm-workspace.yaml / pnpm-lock.yaml / .npmrc をコミット済み
+#   - .npmrc の `node-linker=hoisted` は Metro が `expo-asset` を解決するために必須（削除するとビルドが失敗する）
+#   - android/ は git 管理外。prebuild ステップで生成する
+#   - 秘密情報（google-services.json / keystore / API キー）はリポジトリに含めない
+
+Categories:
+  - Communications
+
+License: MIT
+AuthorName: ryopc
+AuthorEmail: game-ryo@ryopc.org
+
+SourceCode: https://github.com/ryopc/Prepito
+IssueTracker: https://github.com/ryopc/Prepito/issues
+Changelog: https://github.com/ryopc/Prepito/releases
+
+AutoName: Prepito
+
+RepoType: git
+Repo: https://github.com/ryopc/Prepito.git
+
+Builds:
+  - versionName: 0.0.1
+    versionCode: 1
+    commit: d84b0926e7d1a5cbe5a1c5f31b4d0d4d1f0a1b2c3
+    sudo:
+      - apt-get update
+      # Node.js / npm の導入（F-Droid ビルドイメージには Node が無い）
+      - apt-get install npm
+      # pnpm モノレポのため pnpm 9 を導入する
+      - npm -g install pnpm@9
+    init:
+      # ルートで pnpm install によりワークスペース全体を導入する
+      # （.npmrc の node-linker=hoisted と pnpm.patchedDependencies が適用される）
+      - pnpm install --frozen-lockfile
+    srclibs:
+      # Firebase の代替スタブ。expo-notifications は Android で
+      # com.google.firebase:firebase-messaging を必須依存するが、F-Droid は
+      # Google Play Services / Firebase を含むビルドを認めていない。
+      - firebase-stub@ce90a956aacda17a85c60577ee443aeb83d876ef
+    prebuild:
+      # NOTE: F-Droid は prebuild の各コマンドを `;` で連結して 1 つの bash
+      # セッション（cwd = リポジトリルート）で実行する。そのため `cd` の効果は
+      # 以降のコマンドにも引き継がれる。プロジェクトを移動する場合は
+      # サブシェル ( ... ) で囲むこと。
+      #
+      # NOTE: node_modules は pnpm の hoisted 配置（.npmrc の node-linker=hoisted）
+      # のためリポジトリルートにある。packages/app/node_modules は存在しない。
+      #
+      # NOTE: Expo モジュールは SDK 51 では既定で node_modules のソースから
+      # ビルドされる（autolinking の解決結果に全ての sourceDir が含まれる）ため、
+      # buildFromSource の指定は不要。package.json への expo フィールド注入は
+      # app.config.ts 優先の Expo 設定解決で参照されないため行わない。
+      #
+      # Firebase 実体への依存を除去し、スタブのソースを配置する
+      - sed -i -e '/firebase/d' node_modules/expo-notifications/android/build.gradle
+      - cp -a $$firebase-stub$$/firebase-messaging/src node_modules/expo-notifications/android
+      # Play Install Referrer Library (com.android.installreferrer) は
+      # F-Droid の NonFree 判定対象（gradle_signatures: com.android.installreferrer）。
+      # expo-notifications が expo-application 経由で導入するため除去する。
+      # アプリ側で利用していない機能のため、削除しても影響しない。
+      - sed -i -e '/installreferrer/d' node_modules/expo-application/android/build.gradle
+      - sed -i -e '/com\.android\.installreferrer\.api/d' node_modules/expo-application/android/src/main/java/expo/modules/application/ApplicationModule.kt
+      - sed -i -e '/AsyncFunction("getInstallReferrerAsync")/,/^    }$/d' node_modules/expo-application/android/src/main/java/expo/modules/application/ApplicationModule.kt
+      # 除去した Kotlin ソースの構文健全性を検証する。
+      # sed の範囲削除が崩れるとコンパイルエラーになるため、
+      # 原因を明確にするためここで早期検出する。
+      - python3 -c "import sys;s=open('node_modules/expo-application/android/src/main/java/expo/modules/application/ApplicationModule.kt').read();d=s.count('{')-s.count('}');sys.exit('ERROR unbalanced Kotlin braces ' + str(d)) if d else None"
+      # プッシュ通知を無効化する（F-Droid は GMS/FCM を認めないため）
+      #
+      # APK に埋め込まれる assets/app.config は Gradle ビルド中の
+      # createExpoConfig タスク（node getAppConfig.js）が生成する。
+      # このタスクは Gradle プロセスの環境変数を参照するため、
+      # prebuild プロセスに EXPO_PUBLIC_ENABLE_PUSH を指定するだけでは
+      # 反映されない。ビルドフラグファイル経由で両方に伝える。
+      - printf '{"enablePushNotifications":false}\n' > .build-flags.json
+      - (cd packages/app && EXPO_PUBLIC_ENABLE_PUSH=false npx expo prebuild -p android --clean)
+      # versionCode を F-Droid の metadata 値に一致させる
+      # （不一致 않으면 "Unexpected versionCode in output" でビルドが失敗する）
+      - sed -i -e 's/^\([[:space:]]*\)versionCode .*/\1versionCode $$VERCODE$$/' packages/app/android/app/build.gradle
+      # 署名は F-Droid 側で行うため、開発用の署名設定を除去する
+      - sed -i -e '/signingConfig /d' packages/app/android/app/build.gradle
+    output: packages/app/android/app/build/outputs/apk/release/app-release-unsigned.apk
+    build:
+      # Gradle ラッパー (gradlew) を使う。プロジェクトは
+      # plugins/withGradleVersion で Gradle 8.6 に固定しており、
+      # ビルドイメージのシステム Gradle に依存すると版本不一致で失敗する。
+      - cd packages/app/android
+      - ./gradlew assembleRelease --no-daemon
+    scanignore:
+      # hermesc は ELF バイナリのためスキャナが彈く
+      - node_modules/react-native/sdks/hermesc/linux64-bin/hermesc
+      - node_modules/expo-modules-core/android/ExpoModulesCorePlugin.gradle
+      - node_modules/expo-modules-autolinking/scripts/android/autolinking_implementation.gradle
+    scandelete:
+      - node_modules
+
+AutoUpdateMode: Version
+UpdateCheckMode: Tags
+VercodeOperation:
+  - '%c'
+UpdateCheckData: packages/app/app.config.ts|versionCode:\s*(\d+)|packages/app/app.config.ts|version:\s*'([^']+)'
+CurrentVersion: 0.0.1
+CurrentVersionCode: 1

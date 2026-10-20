@@ -1,0 +1,66 @@
+# ローカルで `fdroid build` を実行するための設定。
+#
+# ビルド可能な状態にするには fdroidserver が必要:
+#   https://f-droid.org/docs/Building_Applications/
+#
+# F-Droid への提出用レシピは fdroid/com.prepito.app.yml に置く
+# （fdroiddata リポジトリの metadata/com.prepito.app.yml に転記して使用する）。
+
+Categories:
+  - Communications
+
+License: MIT
+AuthorName: ryopc
+AuthorEmail: game-ryo@ryopc.org
+
+SourceCode: https://github.com/ryopc/Prepito
+IssueTracker: https://github.com/ryopc/Prepito/issues
+
+Builds:
+  - versionName: 0.0.1
+    versionCode: 1
+    sudo:
+      - apt-get update
+      - apt-get install npm
+      - npm -g install pnpm@9
+    init:
+      - pnpm install --frozen-lockfile
+    srclibs:
+      - firebase-stub@ce90a956aacda17a85c60577ee443aeb83d876ef
+    prebuild:
+      # node_modules は pnpm の hoisted 配置のためリポジトリルートにある
+      - sed -i -e '/firebase/d' node_modules/expo-notifications/android/build.gradle
+      - cp -a $$firebase-stub$$/firebase-messaging/src node_modules/expo-notifications/android
+      # Play Install Referrer Library は F-Droid の NonFree 判定対象。アプリでは
+      # 未使用のため除去する（expo-notifications -> expo-application 経由で導入される）。
+      - sed -i -e '/installreferrer/d' node_modules/expo-application/android/build.gradle
+      - sed -i -e '/com\.android\.installreferrer\.api/d' node_modules/expo-application/android/src/main/java/expo/modules/application/ApplicationModule.kt
+      - sed -i -e '/AsyncFunction("getInstallReferrerAsync")/,/^    }$/d' node_modules/expo-application/android/src/main/java/expo/modules/application/ApplicationModule.kt
+      # 除去した Kotlin ソースの構文健全性を検証する。
+      # sed の範囲削除が崩れるとコンパイルエラーになるため、
+      # 原因を明確にするためここで早期検出する。
+      - python3 -c "import sys;s=open('node_modules/expo-application/android/src/main/java/expo/modules/application/ApplicationModule.kt').read();d=s.count('{')-s.count('}');sys.exit('ERROR unbalanced Kotlin braces ' + str(d)) if d else None"
+      # プッシュ通知を無効化する（F-Droid は GMS/FCM を認めない）
+      #
+      # APK に埋め込まれる assets/app.config は Gradle ビルド中の
+      # createExpoConfig タスク（node getAppConfig.js）が生成する。
+      # このタスクは Gradle プロセスの環境変数を参照するため、
+      # prebuild プロセスに EXPO_PUBLIC_ENABLE_PUSH を指定するだけでは
+      # 反映されない。ビルドフラグファイル経由で両方に伝える。
+      - printf '{"enablePushNotifications":false}\n' > .build-flags.json
+      - (cd packages/app && EXPO_PUBLIC_ENABLE_PUSH=false npx expo prebuild -p android --clean)
+      - sed -i -e 's/^\([[:space:]]*\)versionCode .*/\1versionCode $$VERCODE$$/' packages/app/android/app/build.gradle
+      - sed -i -e '/signingConfig /d' packages/app/android/app/build.gradle
+    output: packages/app/android/app/build/outputs/apk/release/app-release-unsigned.apk
+    build:
+      # Gradle ラッパー (gradlew) を使う。プロジェクトは
+      # plugins/withGradleVersion で Gradle 8.6 に固定しており、
+      # ビルドイメージのシステム Gradle に依存すると版本不一致で失敗する。
+      - cd packages/app/android
+      - ./gradlew assembleRelease --no-daemon
+    scanignore:
+      - node_modules/react-native/sdks/hermesc/linux64-bin/hermesc
+      - node_modules/expo-modules-core/android/ExpoModulesCorePlugin.gradle
+      - node_modules/expo-modules-autolinking/scripts/android/autolinking_implementation.gradle
+    scandelete:
+      - node_modules
