@@ -194,17 +194,22 @@ jobs:
             --output "$GITHUB_WORKSPACE/build-output/prepito-android.apk"
       # EXPO_TOKEN 未設定時のフォールバック。
       # EAS の profile 設定（eas.json）を適用しない代わりに、
-      # prebuild で android/ を生成し Gradle で直接ビルドする。
+      # 直前の Prebuild で生成した android/ を Gradle で直接ビルドする。
       - name: Gradle Build (fallback without EXPO_TOKEN)
         if: steps.expo.outputs.mode == 'gradle'
         working-directory: packages/app
         run: |
           set -euo pipefail
-          npx expo prebuild -p android --clean
+          test -d android || { echo "::error::android/ が生成されていません（Prebuild を確認してください）"; exit 1; }
           ( cd android && ./gradlew assembleRelease --no-daemon )
+          # 出力ファイル名は署名設定によって異なる
+          #   署名なし → app-release-unsigned.apk
+          #   debug 署名あり → app-release.apk
+          APK="$(ls -1 android/app/build/outputs/apk/release/*.apk | head -1)"
+          test -f "$APK" || { echo "::error::APK が生成されていません"; exit 1; }
           mkdir -p "$GITHUB_WORKSPACE/build-output"
-          cp android/app/build/outputs/apk/release/app-release-unsigned.apk \
-             "$GITHUB_WORKSPACE/build-output/prepito-android.apk"
+          cp "$APK" "$GITHUB_WORKSPACE/build-output/prepito-android.apk"
+          echo "APK: $APK"
       - name: Verify APK
         run: |
           set -euo pipefail
