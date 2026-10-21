@@ -103,6 +103,14 @@ jobs:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: |
           set -euo pipefail
+          # EAS ビルド（ローカル / クラウドとも）は EAS サーバーに接続する必要がある。
+          # トークンが無いと "An Expo user account is required to proceed." で
+          # 失敗するため、原因を明示して早期に終了する。
+          if [ -z "${EXPO_TOKEN:-}" ]; then
+            echo "::error::EXPO_TOKEN が設定されていません。リポジトリの Secret に EXPO_TOKEN を登録してください。"
+            echo "::error::作成手順: npx eas-cli token:create で生成し、gh secret set EXPO_TOKEN で登録"
+            exit 1
+          fi
           PROJECT_ID=$(npx expo config --json 2>/dev/null | jq -r '.extra.eas.projectId // ""')
           if [ -z "$PROJECT_ID" ]; then
             echo "::error::EAS プロジェクトが未設定です。ローカルで \`EXPO_TOKEN=... eas init --force --non-interactive\` を実行し、app.config.ts の extra.eas.projectId に projectId を設定してください。"

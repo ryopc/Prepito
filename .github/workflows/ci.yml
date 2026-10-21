@@ -147,7 +147,25 @@ jobs:
           }
           echo "ANDROID_NDK_ROOT=${ANDROID_HOME}/ndk/26.1.10909125" >> "$GITHUB_ENV"
           echo "ANDROID_NDK_HOME=${ANDROID_HOME}/ndk/26.1.10909125" >> "$GITHUB_ENV"
+      # EAS ローカルビルドは EAS サーバーに接続してプロジェクト存在を確認するため、
+      # EXPO_TOKEN が未設定だと "An Expo user account is required to proceed." で失敗する。
+      # トークンが無い環境でも APK のビルド検証は成立させるため、
+      # ここではトークンの有無を判定し、無い場合は Gradle 直接ビルドへ切り替える。
+      - name: Detect EXPO_TOKEN
+        id: expo
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -n "${EXPO_TOKEN:-}" ]; then
+            echo "EXPO_TOKEN が設定されているため EAS ローカルビルドを使用します"
+            echo "mode=eas" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::EXPO_TOKEN が未設定のため Gradle 直接ビルドにフォールバックします"
+            echo "mode=gradle" >> "$GITHUB_OUTPUT"
+          fi
       - name: Verify EAS project configuration
+        if: steps.expo.outputs.mode == 'eas'
         working-directory: packages/app
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
@@ -166,6 +184,7 @@ jobs:
       # ビルド処理自体はランナー上で実行されるため、ビルド時間を消費しない
       # --output は --local 専用の指定 (cwd 相対で解決されるため絶対パスを渡す)
       - name: EAS Build (local, Android)
+        if: steps.expo.outputs.mode == 'eas'
         working-directory: packages/app
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
@@ -173,6 +192,19 @@ jobs:
           set -euo pipefail
           eas build --local --platform android --profile preview --non-interactive \
             --output "$GITHUB_WORKSPACE/build-output/prepito-android.apk"
+      # EXPO_TOKEN 未設定時のフォールバック。
+      # EAS の profile 設定（eas.json）を適用しない代わりに、
+      # prebuild で android/ を生成し Gradle で直接ビルドする。
+      - name: Gradle Build (fallback without EXPO_TOKEN)
+        if: steps.expo.outputs.mode == 'gradle'
+        working-directory: packages/app
+        run: |
+          set -euo pipefail
+          npx expo prebuild -p android --clean
+          ( cd android && ./gradlew assembleRelease --no-daemon )
+          mkdir -p "$GITHUB_WORKSPACE/build-output"
+          cp android/app/build/outputs/apk/release/app-release-unsigned.apk \
+             "$GITHUB_WORKSPACE/build-output/prepito-android.apk"
       - name: Verify APK
         run: |
           set -euo pipefail
@@ -283,9 +315,24 @@ jobs:
           # 1) Firebase / GMS などの NonFree な依存が残っていないこと
           #    fdroidserver の KnownNonFree 相当のパターンで判定する
           echo "--- release ランタイム依存に NonFree な依存がないこと ---"
-          ( cd android && gradle :app:dependencies --configuration releaseRuntimeClasspath --no-daemon ) \
-            > /tmp/deps.txt 2>/dev/null || true
-          python3 fdroid/check-nonfree.py /tmp/deps.txt
+          # レシピと同じく Gradle ラッパーを使う（プロジェクトは Gradle 8.6 固定）。
+          # システム gradle を使うと版本不一致で失敗し、
+          # 出力先が空になると下面的チェックが空振り（常に成功）してしまう。
+          ( cd android && ./gradlew :app:dependencies --configuration releaseRuntimeClasspath --no-daemon ) \
+            > /tmp/deps.txt 2>/tmp/deps.err || {
+              echo "::error::releaseRuntimeClasspath の解決に失敗しました"
+              tail -30 /tmp/deps.err
+              exit 1
+            }
+          # 依存グラフが空だと NonFree チェックが常に成功してしまうため、
+          # 取得できない場合は失敗させる
+          if ! grep -q 'releaseRuntimeClasspath' /tmp/deps.txt; then
+            echo "::error::依存グラフを取得できませんでした（deps.txt が空または不正）"
+            wc -l /tmp/deps.txt
+            exit 1
+          fi
+          # check-nonfree.py はリポジトリルートにある（このステップの cwd は packages/app）
+          python3 ../../fdroid/check-nonfree.py /tmp/deps.txt
 
           # 2) 未署名であること（F-Droid 側で署名する）
           if unzip -l "$APK" | grep -qiE 'META-INF/.*\.(RSA|DSA|EC|SF)$'; then
