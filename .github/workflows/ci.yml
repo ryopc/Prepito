@@ -270,7 +270,7 @@ jobs:
         run: pnpm install --recursive --frozen-lockfile
       - name: Create Changeset
         id: changeset
-        uses: changesets/action@v1
+        uses: changesets/action@v2
         with:
           publish: pnpm release
         env:
