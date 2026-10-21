@@ -47,6 +47,11 @@ Builds:
       # Google Play Services / Firebase を含むビルドを認めていない。
       - firebase-stub@ce90a956aacda17a85c60577ee443aeb83d876ef
     prebuild:
+      # ビルド準備は単一の情報源 `fdroid/build-recipe.sh` に集約している。
+      # GitHub Actions の `fdroid-build` / `release` ジョブも同じスクリプトを
+      # 実行するため、F-Droid 向け APK と GitHub Release 向け APK は
+      # 同一のソース・依存・Gradle 設定でビルドされる（差異は署名だけ）。
+      #
       # NOTE: F-Droid は prebuild の各コマンドを `;` で連結して 1 つの bash
       # セッション（cwd = リポジトリルート）で実行する。そのため `cd` の効果は
       # 以降のコマンドにも引き継がれる。プロジェクトを移動する場合は
@@ -60,34 +65,11 @@ Builds:
       # buildFromSource の指定は不要。package.json への expo フィールド注入は
       # app.config.ts 優先の Expo 設定解決で参照されないため行わない。
       #
-      # Firebase 実体への依存を除去し、スタブのソースを配置する
-      - sed -i -e '/firebase/d' node_modules/expo-notifications/android/build.gradle
-      - cp -a $$firebase-stub$$/firebase-messaging/src node_modules/expo-notifications/android
-      # Play Install Referrer Library (com.android.installreferrer) は
-      # F-Droid の NonFree 判定対象（gradle_signatures: com.android.installreferrer）。
-      # expo-notifications が expo-application 経由で導入するため除去する。
-      # アプリ側で利用していない機能のため、削除しても影響しない。
-      - sed -i -e '/installreferrer/d' node_modules/expo-application/android/build.gradle
-      - sed -i -e '/com\.android\.installreferrer\.api/d' node_modules/expo-application/android/src/main/java/expo/modules/application/ApplicationModule.kt
-      - sed -i -e '/AsyncFunction("getInstallReferrerAsync")/,/^    }$/d' node_modules/expo-application/android/src/main/java/expo/modules/application/ApplicationModule.kt
-      # 除去した Kotlin ソースの構文健全性を検証する。
-      # sed の範囲削除が崩れるとコンパイルエラーになるため、
-      # 原因を明確にするためここで早期検出する。
-      - python3 -c "import sys;s=open('node_modules/expo-application/android/src/main/java/expo/modules/application/ApplicationModule.kt').read();d=s.count('{')-s.count('}');sys.exit('ERROR unbalanced Kotlin braces ' + str(d)) if d else None"
-      # プッシュ通知を無効化する（F-Droid は GMS/FCM を認めないため）
-      #
-      # APK に埋め込まれる assets/app.config は Gradle ビルド中の
-      # createExpoConfig タスク（node getAppConfig.js）が生成する。
-      # このタスクは Gradle プロセスの環境変数を参照するため、
-      # prebuild プロセスに EXPO_PUBLIC_ENABLE_PUSH を指定するだけでは
-      # 反映されない。ビルドフラグファイル経由で両方に伝える。
-      - printf '{"enablePushNotifications":false}\n' > .build-flags.json
-      - (cd packages/app && EXPO_PUBLIC_ENABLE_PUSH=false npx expo prebuild -p android --clean)
-      # versionCode を F-Droid の metadata 値に一致させる
-      # （不一致 않으면 "Unexpected versionCode in output" でビルドが失敗する）
-      - sed -i -e 's/^\([[:space:]]*\)versionCode .*/\1versionCode $$VERCODE$$/' packages/app/android/app/build.gradle
-      # 署名は F-Droid 側で行うため、開発用の署名設定を除去する
-      - sed -i -e '/signingConfig /d' packages/app/android/app/build.gradle
+      # 環境変数の意味:
+      #   FIREBASE_STUB_DIR    = $$firebase-stub$$（srclib の展開先）
+      #   VERCODE              = $$VERCODE$$（metadata の versionCode）
+      #   PREPITO_SIGNING_MODE = unsigned（F-Droid は自前の鍵で署名するため未署名にする）
+      - FIREBASE_STUB_DIR=$$firebase-stub$$ VERCODE=$$VERCODE$$ PREPITO_SIGNING_MODE=unsigned bash fdroid/build-recipe.sh
     output: packages/app/android/app/build/outputs/apk/release/app-release-unsigned.apk
     build:
       # Gradle ラッパー (gradlew) を使う。プロジェクトは

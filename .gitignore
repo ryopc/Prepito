@@ -61,6 +61,13 @@ credentials.json
 # F-Droid ビルド時に生成するビルドフラグファイル（コミットしない）
 .build-flags.json
 
+# リリース署名鍵（コミットしない。docs/release-signing.md 参照）
+# 生成した鍵は GitHub Secret（ANDROID_KEYSTORE_BASE64）に入れて管理する
+*.keystore
+*.jks
+*.p12
+prepito-release.keystore.b64
+
 # Python
 __pycache__/
 *.py[cod]

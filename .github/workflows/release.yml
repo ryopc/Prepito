@@ -1,5 +1,21 @@
 name: Release
 
+# GitHub Release 用の APK を F-Droid と同じビルド手順で生成する。
+#
+# 方針:
+#   - ビルド準備は F-Droid サーバと同じ単一の情報源 (fdroid/build-recipe.sh) を使う
+#   - 差異は署名だけ。F-Droid は未署名 (F-Droid 側の鍵で署名)、
+#     GitHub Release はリリース鍵で署名する
+#   - EAS (eas build) には依存しない。EXPO_TOKEN Secret は不要
+#
+# 必要な Secret:
+#   ANDROID_KEYSTORE_BASE64   base64 化した keystore
+#   ANDROID_KEYSTORE_PASSWORD  keystore のパスワード
+#   ANDROID_KEY_ALIAS         鍵のエイリアス
+#   ANDROID_KEY_PASSWORD      鍵のパスワード
+#
+# 詳細は docs/release-signing.md を参照。
+
 on:
   push:
     tags:
@@ -10,13 +26,6 @@ on:
         description: 'Release version (e.g. 1.0.0)'
         required: false
         default: ''
-      build_mode:
-        description: 'ビルド方式 (local = ランナー上でビルド / cloud = EAS クラウドビルド)'
-        type: choice
-        options:
-          - local
-          - cloud
-        default: local
 
 permissions:
   contents: write
@@ -45,40 +54,15 @@ jobs:
       - name: Typecheck (quality gate)
         run: pnpm typecheck
 
-      # EAS CLI のバージョンを固定する。
-      # ローカルビルドプラグインのバージョンは @expo/eas-build-job から導出するため、
-      # eas-cli の内部構成が変わると導出に失敗しうるため pin する。
-      - name: Install EAS CLI
-        run: npm install -g eas-cli@25.2.0
-
-      # EAS ローカルビルド用プラグインを事前導入する。
-      # dtrace-provider (bunyan の optional 依存) はネイティブビルドが失敗すると
-      # dtrace-provider.js が 0 バイトになり、プラグインが
-      # "dtrace.createDTraceProvider is not a function" で TypeError する。
-      # 除去すれば bunyan は既定実装へフォールバックするため、
-      # OS やツールチェーンに依存せず確実にビルドできる。
-      - name: Prepare EAS local build plugin
-        run: |
-          set -euo pipefail
-          EAS_ROOT="$(npm root -g)/eas-cli"
-          PLUGIN_VERSION="$(node -p "require('$EAS_ROOT/node_modules/@expo/eas-build-job/package.json').version" 2>/dev/null || node -p "require('$(npm root -g)/@expo/eas-build-job/package.json').version")"
-          echo "EAS local build plugin version: $PLUGIN_VERSION"
-          PLUGIN_DIR="$RUNNER_TEMP/eas-local-build-plugin"
-          mkdir -p "$PLUGIN_DIR"
-          cd "$PLUGIN_DIR"
-          npm init -y > /dev/null
-          npm install --no-save "eas-cli-local-build-plugin@$PLUGIN_VERSION"
-          find "$PLUGIN_DIR/node_modules" -type d -name 'dtrace-provider' -prune -exec rm -rf {} + 2>/dev/null || true
-          echo "EAS_LOCAL_BUILD_PLUGIN_PATH=$PLUGIN_DIR/node_modules/eas-cli-local-build-plugin/bin/run" >> "$GITHUB_ENV"
-
       - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      # ローカルビルドはホストの Android SDK を直接使うため、
+      # ビルドはホストの Android SDK を直接使うため、
       # プロジェクトが要求する NDK を明示的に導入する
+      # (GitHub ランナー既定の NDK は 27/29/30 で 26.1.10909125 ではない)
       - name: Install Android NDK
         run: |
           set -euo pipefail
@@ -95,81 +79,129 @@ jobs:
           echo "ANDROID_NDK_ROOT=${ANDROID_HOME}/ndk/26.1.10909125" >> "$GITHUB_ENV"
           echo "ANDROID_NDK_HOME=${ANDROID_HOME}/ndk/26.1.10909125" >> "$GITHUB_ENV"
 
-      # EXPO_TOKEN 環境変数を設定するだけで EAS CLI は認証される
-      # (eas login は username/password 認証専用。access token では不要)
-      - name: Verify EAS project configuration
-        working-directory: packages/app
+      # F-Droid の公式 firebase-stub srclib。expo-notifications の
+      # com.google.firebase:firebase-messaging 依存を代替する。
+      # F-Droid と同じビルドにするため、公式ビルドと同一の srclib を使う。
+      - name: Fetch firebase-stub (F-Droid srclib)
         env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          FB_STUB_SHA: ce90a956aacda17a85c60577ee443aeb83d876ef
         run: |
           set -euo pipefail
-          # EAS ビルド（ローカル / クラウドとも）は EAS サーバーに接続する必要がある。
-          # トークンが無いと "An Expo user account is required to proceed." で
-          # 失敗するため、原因を明示して早期に終了する。
-          if [ -z "${EXPO_TOKEN:-}" ]; then
-            echo "::error::EXPO_TOKEN が設定されていません。リポジトリの Secret に EXPO_TOKEN を登録してください。"
-            echo "::error::作成手順: npx eas-cli token:create で生成し、gh secret set EXPO_TOKEN で登録"
+          mkdir -p "$RUNNER_TEMP/firebase-stub"
+          curl -fsSL "https://gitlab.com/freed-by-fdroid/firebase-stubs/-/archive/${FB_STUB_SHA}/firebase-stubs-${FB_STUB_SHA}.tar.gz" \
+            | tar xz -C "$RUNNER_TEMP/firebase-stub" --strip-components=1
+          test -d "$RUNNER_TEMP/firebase-stub/firebase-messaging/src"
+          echo "firebase-stub を展開しました"
+
+      # リリース署名鍵を復元する。
+      # keystore は「一度作って失効しない」鍵のため Secret で管理する
+      # （毎回生成すると署が変わるため、F-Droid からの更新と
+      #  インストール済みアプリの更新に失敗する）。
+      - name: Restore release keystore
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          missing=()
+          [ -n "${ANDROID_KEYSTORE_BASE64:-}" ]   || missing+=("ANDROID_KEYSTORE_BASE64")
+          [ -n "${ANDROID_KEYSTORE_PASSWORD:-}" ]  || missing+=("ANDROID_KEYSTORE_PASSWORD")
+          [ -n "${ANDROID_KEY_ALIAS:-}" ]         || missing+=("ANDROID_KEY_ALIAS")
+          [ -n "${ANDROID_KEY_PASSWORD:-}" ]      || missing+=("ANDROID_KEY_PASSWORD")
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::リリース署名に必要な Secret が設定されていません: ${missing[*]}"
+            echo "::error::keystore は一度生成して失効させません。docs/release-signing.md の手順で作成し、"
+            echo "::error::gh secret set <名前> で登録してください。"
             exit 1
           fi
-          PROJECT_ID=$(npx expo config --json 2>/dev/null | jq -r '.extra.eas.projectId // ""')
-          if [ -z "$PROJECT_ID" ]; then
-            echo "::error::EAS プロジェクトが未設定です。ローカルで \`EXPO_TOKEN=... eas init --force --non-interactive\` を実行し、app.config.ts の extra.eas.projectId に projectId を設定してください。"
+          KEYSTORE_PATH="${RUNNER_TEMP}/prepito-release.keystore"
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
+          test -s "$KEYSTORE_PATH" || { echo "::error::keystore の復元に失敗しました"; exit 1; }
+          echo "PREPITO_KEYSTORE_FILE=$KEYSTORE_PATH" >> "$GITHUB_ENV"
+          echo "PREPITO_KEYSTORE_PASSWORD=$ANDROID_KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
+          echo "PREPITO_KEY_ALIAS=$ANDROID_KEY_ALIAS" >> "$GITHUB_ENV"
+          echo "PREPITO_KEY_PASSWORD=$ANDROID_KEY_PASSWORD" >> "$GITHUB_ENV"
+          echo "keystore を復元しました: $KEYSTORE_PATH"
+
+      # F-Droid サーバと同じスクリプトでビルド準備する（単一の情報源）。
+      - name: Build preparation (shared recipe script)
+        env:
+          FIREBASE_STUB_DIR: ${{ runner.temp }}/firebase-stub
+          PREPITO_SIGNING_MODE: release
+        run: |
+          set -euo pipefail
+          VERCODE="$(grep -oE 'versionCode:[[:space:]]*[0-9]+' packages/app/app.config.ts | head -1 | grep -oE '[0-9]+')"
+          test -n "$VERCODE" || { echo "::error::app.config.ts から versionCode を取得できません"; exit 1; }
+          export VERCODE
+          bash fdroid/build-recipe.sh
+
+      # レシピと同じく Gradle ラッパーを使う（プロジェクトは Gradle 8.6 固定）
+      - name: Gradle assembleRelease
+        working-directory: packages/app/android
+        run: ./gradlew assembleRelease --no-daemon
+
+      - name: Verify APK
+        run: |
+          set -euo pipefail
+          APK_DIR="packages/app/android/app/build/outputs/apk/release"
+          # 署名ありなら app-release.apk、署名なしなら app-release-unsigned.apk
+          shopt -s nullglob
+          APKS=("$APK_DIR"/*.apk)
+          shopt -u nullglob
+          if [ ${#APKS[@]} -eq 0 ]; then
+            echo "::error::APK が生成されていません: $APK_DIR/*.apk"
             exit 1
           fi
-          echo "EAS projectId: $PROJECT_ID"
+          APK="${APKS[0]}"
+          unzip -l "$APK" > /dev/null
 
-      - name: Build Android APK
-        id: build_android
-        working-directory: packages/app
-        env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-          BUILD_MODE: ${{ github.event.inputs.build_mode || 'local' }}
-        run: |
-          set -euo pipefail
-          if [ "$BUILD_MODE" = "cloud" ]; then
-            # --wait: 完了まで待ってアーティファクト URL を取得する
-            # --json : stdout に JSON のみを出力する (ログは stderr)
-            eas build \
-              --platform android \
-              --profile production \
-              --non-interactive \
-              --wait \
-              --json > /tmp/eas-android.json
-            cat /tmp/eas-android.json
-            BUILD_URL=$(jq -r '.[0].artifacts.buildUrl // empty' /tmp/eas-android.json)
-            if [ -z "$BUILD_URL" ]; then
-              echo "::error::EAS ビルドのアーティファクト URL を取得できませんでした"
-              exit 1
-            fi
-            echo "android_url=$BUILD_URL" >> "$GITHUB_OUTPUT"
+          # 1) 署名されていること（未署名 APK は端末にインストールできない）
+          #    署名スキーム v2/v3 は META-INF/*.RSA を生成しないため、
+          #    META-INF の有無ではなく apksigner で判定する
+          APKSIGNER="$(ls -d "${ANDROID_HOME}/build-tools/"*/apksigner 2>/dev/null | sort -V | tail -1 || true)"
+          if [ -n "$APKSIGNER" ] && [ -x "$APKSIGNER" ]; then
+            "$APKSIGNER" verify "$APK" > /dev/null 2>&1 \
+              || { echo "::error::APK の署名検証に失敗しました（署名されていません）"; exit 1; }
+            "$APKSIGNER" verify --print-certs "$APK" 2>&1 | head -3
+            echo "OK: 署名済み（apksigner で検証）"
           else
-            # ローカルビルド: EAS サーバーに接続するのはプロジェクト存在確認のみ。
-            # ビルド本体はランナー上で実行されるため EAS のビルド時間を消費しない。
-            # --output は --local 専用の指定 (cwd 相対で解決されるため絶対パスを渡す)
-            eas build --local --platform android --profile production --non-interactive \
-              --output "$GITHUB_WORKSPACE/build-output/prepito-android.apk"
-            echo "android_path=$GITHUB_WORKSPACE/build-output/prepito-android.apk" >> "$GITHUB_OUTPUT"
+            echo "::error::apksigner が見つかりません。署名を検証できないため Release を作成できません"
+            exit 1
           fi
 
-      - name: Download Android APK
-        env:
-          BUILD_MODE: ${{ github.event.inputs.build_mode || 'local' }}
-          BUILD_URL: ${{ steps.build_android.outputs.android_url }}
-          BUILD_PATH: ${{ steps.build_android.outputs.android_path }}
-        run: |
-          set -euo pipefail
-          if [ "$BUILD_MODE" = "cloud" ]; then
-            curl -fL -o Prepito-android.apk "$BUILD_URL"
+          # 2) package 名と versionCode が app.config.ts と一致すること
+          AAPT="$(ls -d "${ANDROID_HOME}/build-tools/"*/aapt 2>/dev/null | sort -V | tail -1 || true)"
+          if [ -n "$AAPT" ] && [ -x "$AAPT" ]; then
+            BADGING="$("$AAPT" dump badging "$APK")"
+            echo "$BADGING" | head -3
+            echo "$BADGING" | grep -q "package: name='com.prepito.app'" \
+              || { echo "::error::package 名が com.prepito.app ではありません"; exit 1; }
+            VERSIONCODE="$(grep -oE 'versionCode:[[:space:]]*[0-9]+' packages/app/app.config.ts | head -1 | grep -oE '[0-9]+')"
+            echo "$BADGING" | grep -q "versionCode='${VERSIONCODE}'" \
+              || { echo "::error::versionCode が app.config.ts (${VERSIONCODE}) と一致しません"; exit 1; }
+            echo "OK: package / versionCode 一致"
           else
-            cp "$BUILD_PATH" Prepito-android.apk
+            echo "::warning::aapt が見つからないため package / versionCode の検証をスキップします"
           fi
-          ls -lh Prepito-android.apk
-          # APK の健全性確認 (zip ヘッダ確認)
-          unzip -l Prepito-android.apk > /dev/null
+
+          # 3) Google Play Services のクラスが含まれないこと
+          #    （F-Droid ビルドと同じ依存構成であることを担保する）
+          if unzip -p "$APK" 'classes*.dex' 2>/dev/null | strings | grep -q 'com/google/android/gms'; then
+            echo "::error::APK に com/google/android/gms のクラスが含まれています"
+            exit 1
+          fi
+          echo "OK: GMS クラスなし"
+
+          mkdir -p build-output
+          cp "$APK" build-output/Prepito-android.apk
+          ls -lh build-output/Prepito-android.apk
 
       - name: Determine release tag and version
         id: tag
         run: |
+          set -euo pipefail
           if [ "${{ github.ref_type }}" = "tag" ]; then
             TAG="${{ github.ref_name }}"
           else
@@ -206,7 +238,7 @@ jobs:
             ### ビルド情報
 
             - プラットフォーム: Android (APK)
-            - ビルド方式: ${{ github.event.inputs.build_mode || 'local' }}
+            - ビルド方式: F-Droid と同じビルド手順 (fdroid/build-recipe.sh) + リリース署名
             - 暗号化: SQLite + SQLCipher (ローカルDB), Signal Protocol (E2E)
           draft: false
           prerelease: false
@@ -215,4 +247,4 @@ jobs:
       - name: Upload Android APK to Release
         uses: softprops/action-gh-release@v2
         with:
-          files: Prepito-android.apk
+          files: build-output/Prepito-android.apk

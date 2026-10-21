@@ -9,6 +9,8 @@
     "build:ios": "eas build --platform ios",
     "build:android": "eas build --platform android",
     "build:all": "eas build --platform all",
+    "build:android:local": "bash ../../scripts/build-android.sh",
+    "build:android:release": "bash ../../scripts/build-android.sh --release",
     "submit:ios": "eas submit --platform ios",
     "submit:android": "eas submit --platform android",
     "typecheck": "tsc --noEmit",

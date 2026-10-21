@@ -104,6 +104,18 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
         android: { enableProguardInReleaseBuilds: true },
       },
     ],
+    /**
+     * 署名設定（F-Droid ビルドは未署名、GitHub Release ビルドはリリース署名）
+     *
+     * モードは環境変数 `PREPITO_SIGNING_MODE` で指定する。
+     * - `unsigned` : 署名指定を除去する（F-Droid は自前の鍵で署名するため）
+     * - `release`  : `PREPITO_KEYSTORE_*` の keystore で署名する
+     * - 未指定     : 何もしない（prebuild 既定の debug 署名のまま）
+     *
+     * 他の plugin が build.gradle を書き換えた**後**に適用したいので、
+     * この plugin は最後に配置している。
+     */
+    './plugins/withReleaseSigning',
   ],
   experiments: {
     typedRoutes: true,

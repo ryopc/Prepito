@@ -172,9 +172,8 @@ pnpm lint
 # テスト
 pnpm --filter @prepito/app test
 
-# ビルド (EAS)
-pnpm --filter @prepito/app build:ios
-pnpm --filter @prepito/app build:android
+# ビルド (F-Droid と同じ手順。EAS は手動利用向けの任意)
+pnpm --filter @prepito/app build:android:local
 
 # libsignal-client との相互運用テスト（実ネイティブ実装との往復）
 pnpm --filter @prepito/app test:interop
@@ -342,29 +341,45 @@ GitHub Actions が型チェック → Lint → テスト → ビルド → リ�
 | Job | トリガー | 内容 |
 |-----|---------|------|
 | `typecheck` / `lint` / `test` | push / PR | 品質ゲート |
-| `build-app` | push / PR | `eas build --local` で APK 検証（Artifacts に保存） |
 | `fdroid-build` | push / PR | F-Droid レシピで APK をビルドし、Firebase / GMS 非包含と versionCode 一致を検証 |
-| `release` | tag push (`v*`) | APK をビルドして GitHub Release に添付 |
+| `changeset` / `release` | PR | `@prepito/shared` の npm publish |
+| `Release`（別ワークフロー） | tag push (`v*`) / 手動 | **同じビルド手順**で署名付き APK を生成し GitHub Release に添付 |
 
-### EXPO_TOKEN 未設定時の挙動
+### ビルドの単一情報源
 
-`build-app` ジョブは EAS サーバーに接続する必要があるため、`EXPO_TOKEN` が
-未設定だと `An Expo user account is required to proceed.` で失敗する。
-Secret を登録していないリポジトリでも品質ゲートを成立させるため、
-トークンの有無を判定し、**未設定時は Gradle 直接ビルドへフォールバック**する。
+**F-Droid 公開を主目的**とし、GitHub Releases は同じビルドの副産物として扱う。
+ビルド準備は `fdroid/build-recipe.sh` に集約しており、
+F-Droid サーバも GitHub Actions も**このスクリプトしか実行しない**。
 
-| 状態 | 実行経路 | 生成される APK |
-|------|---------|---------------|
-| `EXPO_TOKEN` あり | `eas build --local`（`eas.json` の profile を適用） | `app-release.apk` |
-| `EXPO_TOKEN` なし | `expo prebuild` → `./gradlew assembleRelease` | `app-release.apk`（debug 署名） |
+```
+fdroid/build-recipe.sh
+  ├─ Firebase 実体の除去（公式 firebase-stub srclib に差し替え）
+  ├─ Play Install Referrer Library の除去（NonFree 判定対象）
+  ├─ Kotlin ソースの波括弧均衡チェック
+  ├─ ビルドフラグ（プッシュ通知の無効化）
+  ├─ expo prebuild -p android --clean
+  ├─ versionCode の統一
+  └─ 署名設定の検証
+```
 
-F-Droid 公開の本命は `fdroid-build` ジョブであり、こちらは
-`EXPO_TOKEN` に依存せず常に同じ経路（署名除去 → `app-release-unsigned.apk`）で通る。
+| 配信先 | 署名 | `PREPITO_SIGNING_MODE` | 出力 APK |
+|--------|------|------------------------|----------|
+| F-Droid | なし（F-Droid サーバが署名） | `unsigned` | `app-release-unsigned.apk` |
+| GitHub Releases | リリース鍵（Secret 管理） | `release` | `app-release.apk`（署名 + zipalign 済み） |
 
-> **注意**: `expo prebuild` が生成する `app/build.gradle` には
-> `release { signingConfig signingConfigs.debug }` が含まれるため、
-> 署名を除去しないビルドの出力は `app-release.apk`（debug 署名）になる。
-> `app-release-unsigned.apk` は署名を除去した場合だけのファイル名。
+**差異は署名だけ**である。ソース・依存・Gradle 設定・ビルドフラグは同一のため、
+GitHub Releases の APK も F-Droid と同じ依存構成（Firebase / GMS を含まない）になる。
+
+### EAS に依存しない
+
+CI は **EAS（`eas build`）を一切使用しない**。
+
+- `EXPO_TOKEN` Secret の登録が不要
+- EAS サーバへの接続がないため、**フリーティア枠を消費しない**
+- EAS プロジェクトとの紐付け（`eas init`）が不要
+
+`eas.json` / `extra.eas.projectId` は**手動で EAS ビルドしたい開発者向けの
+残骸**として残してある。CI からは参照しない。
 
 ### F-Droid 検証の厳格さ
 
@@ -379,28 +394,13 @@ Gradle の依存グラフ（`releaseRuntimeClasspath`）を走査する。
 
 ### ビルド方式
 
-ビルドは **EAS ローカルビルド** (`eas build --local`) を採用している。
-EAS サーバーに接続するのはプロジェクト存在の確認のみで、ビルド本体は
-GitHub Actions のランナー上で実行されるため、**EAS のビルド時間を消費しない**
-（フリーティア枠の枯渇を回避）。
-
-- ビルド出力の指定は `--output`（`--local` 専用フラグ。cwd 相対で解決されるため絶対パスを渡す）
-- Android のみ対応（iOS のローカルビルドは macOS + Xcode が必要なため）
-- ランナーの既定 NDK は 27/29/30 で、プロジェクトが要求する `26.1.10909125`
-  と不一致なため CI で `sdkmanager` により明示導入している
-- `eas-cli` は `25.2.0` に pin している（ローカルビルドプラグインのバージョンを
-  `@expo/eas-build-job` から導出するため、eas-cli の内部構成が変わると導出が壊れるため）
 - Gradle 8.x 互換パッチ（`pnpm.patchedDependencies`）を適用している。
   `pnpm install` が patch を適用するため、CI でもローカルでも同じ状態になる
   （詳細は Prerequisites の「Gradle 8.x 互換パッチ」を参照）
-- ローカルビルドプラグインは `EAS_LOCAL_BUILD_PLUGIN_PATH` で事前導入したものを使用する。
-  `dtrace-provider`（bunyan の optional 依存）はネイティブビルドが失敗すると
-  `dtrace-provider.js` が 0 バイトになり、プラグインが
-  `dtrace.createDTraceProvider is not a function` で `TypeError` する。
-  除去すれば bunyan は既定実装へフォールバックするため、OS やツールチェーンに依存しない
-
-リリース時に EAS クラウドビルドを使いたい場合は、`workflow_dispatch` の
-`build_mode` 入力に `cloud` を指定する。
+- ランナーの既定 NDK は 27/29/30 で、プロジェクトが要求する `26.1.10909125`
+  と不一致なため CI で `sdkmanager` により明示導入している
+- 署名設定は config plugin `packages/app/plugins/withReleaseSigning.js` が
+  `expo prebuild` の最中に適用する（Groovy の文字列操作を 1 箇所に集約するため）
 
 ### ローカルでのビルド（検証用）
 
@@ -410,7 +410,6 @@ CI と同じ手順をローカルで再現する場合：
 # 依存ツール (Homebrew)
 brew install openjdk@17
 brew install --cask android-commandlinetools
-brew install --cask eas-cli
 nvm install 22 && nvm use 22     # Node 20 / 22 推奨 (CI は Node 20 固定)
 
 # 環境変数 (~/.zshrc)
@@ -421,40 +420,42 @@ export PATH="$JAVA_HOME/bin:$ANDROID_HOME/platform-tools:$ANDROID_HOME/cmdline-t
 # SDK パッケージ (プロジェクトが要求する NDK バージョンを合わせる)
 sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" "ndk;26.1.10909125"
 
-# ローカルビルドプラグインを事前導入し dtrace-provider を除去する
-# (macOS ではネイティブビルドが失敗して dtrace-provider.js が壊れるため)
-PLUGIN_VERSION=$(node -p "require('$(npm root -g)/eas-cli/node_modules/@expo/eas-build-job/package.json').version")
-PLUGIN_DIR="$HOME/.cache/eas-local-build-plugin"
-mkdir -p "$PLUGIN_DIR" && cd "$PLUGIN_DIR" && npm init -y > /dev/null
-npm install --no-save "eas-cli-local-build-plugin@$PLUGIN_VERSION"
-find "$PLUGIN_DIR/node_modules" -type d -name 'dtrace-provider' -prune -exec rm -rf {} + 2>/dev/null || true
-export EAS_LOCAL_BUILD_PLUGIN_PATH="$PLUGIN_DIR/node_modules/eas-cli-local-build-plugin/bin/run"
+# ビルド準備 (F-Droid と同じスクリプト)
+# firebase-stub は CI と同じ srclib を使う
+FB_STUB_SHA=ce90a956aacda17a85c60577ee443aeb83d876ef
+mkdir -p /tmp/firebase-stub
+curl -fsSL "https://gitlab.com/freed-by-fdroid/firebase-stubs/-/archive/${FB_STUB_SHA}/firebase-stubs-${FB_STUB_SHA}.tar.gz" \
+  | tar xz -C /tmp/firebase-stub --strip-components=1
+
+FIREBASE_STUB_DIR=/tmp/firebase-stub \
+VERCODE="$(grep -oE 'versionCode:[[:space:]]*[0-9]+' packages/app/app.config.ts | head -1 | grep -oE '[0-9]+')" \
+PREPITO_SIGNING_MODE=unsigned \
+  bash fdroid/build-recipe.sh
 
 # ビルド
-cd packages/app
-eas login
-eas build --local --platform android --profile preview --non-interactive --output ./out/prepito.apk
+( cd packages/app/android && ./gradlew assembleRelease --no-daemon )
+ls -lh packages/app/android/app/build/outputs/apk/release/
 ```
+
+署名付き（GitHub Release 用）をローカルで試す場合は keystore を用意して
+`PREPITO_SIGNING_MODE=release` と `PREPITO_KEYSTORE_*` を指定する。
+詳細は [docs/release-signing.md](docs/release-signing.md) を参照。
 
 ### 必要な Secret
 
 | Secret | 取得元 | 用途 |
 |--------|--------|------|
-| `EXPO_TOKEN` | [expo.dev/settings/access-tokens](https://expo.dev/settings/access-tokens) で生成 | EAS CLI の認証（`eas login` は不要） |
+| `ANDROID_KEYSTORE_BASE64` | `keytool` で生成した keystore を base64 化 | GitHub Release の APK 署名 |
+| `ANDROID_KEYSTORE_PASSWORD` | 同上 | keystore のパスワード |
+| `ANDROID_KEY_ALIAS` | 同上 | 鍵のエイリアス |
+| `ANDROID_KEY_PASSWORD` | 同上 | 鍵のパスワード |
 | `GITHUB_TOKEN` | GitHub が自動発行 | Release 作成 |
 | `NPM_TOKEN` | npmjs.com → Access Tokens | `@prepito/shared` の publish |
 
-### 初回セットアップ（1回のみ）
-
-EAS プロジェクトとのリンクが必要（未設定だと `eas build` が
-`EAS project not configured` で失敗する）。
-
-```bash
-cd packages/app
-EXPO_TOKEN=<トークン> eas init --force --non-interactive
-# 表示された projectId を app.config.ts の extra.eas.projectId に設定
-# （EXPO_PUBLIC_EAS_PROJECT_ID 環境変数でも可）
-```
+**F-Droid ビルドには署名鍵は不要**（F-Droid サーバが自前の鍵で署名する）。
+GitHub Release 用の 4 つの Secret は
+[docs/release-signing.md](docs/release-signing.md) の手順で作成する。
+未設定の場合、Release ジョブは未署名 APK を添付せず**明示的なエラーで失敗**する。
 
 ### リリース作成
 
@@ -590,7 +591,7 @@ F-Droid の `prebuild` コマンドは `;` で連結され、**cwd がリポジ�
 | **Database** | Expo SQLite (SQLCipher) |
 | **Crypto** | Signal Protocol 純 TS 実装（X3DH + Double Ratchet、XEdDSA）— `@noble/curves` / `@noble/hashes` / `@noble/ciphers` + `@noble/ed25519` |
 | **Auth** | JWT (HS256) + ed25519 message signing |
-| **CI/CD** | GitHub Actions + EAS Build |
+| **CI/CD** | GitHub Actions（F-Droid と同じビルド手順） |
 
 ## 📄 License
 
