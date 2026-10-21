@@ -346,6 +346,37 @@ GitHub Actions が型チェック → Lint → テスト → ビルド → リ�
 | `fdroid-build` | push / PR | F-Droid レシピで APK をビルドし、Firebase / GMS 非包含と versionCode 一致を検証 |
 | `release` | tag push (`v*`) | APK をビルドして GitHub Release に添付 |
 
+### EXPO_TOKEN 未設定時の挙動
+
+`build-app` ジョブは EAS サーバーに接続する必要があるため、`EXPO_TOKEN` が
+未設定だと `An Expo user account is required to proceed.` で失敗する。
+Secret を登録していないリポジトリでも品質ゲートを成立させるため、
+トークンの有無を判定し、**未設定時は Gradle 直接ビルドへフォールバック**する。
+
+| 状態 | 実行経路 | 生成される APK |
+|------|---------|---------------|
+| `EXPO_TOKEN` あり | `eas build --local`（`eas.json` の profile を適用） | `app-release.apk` |
+| `EXPO_TOKEN` なし | `expo prebuild` → `./gradlew assembleRelease` | `app-release.apk`（debug 署名） |
+
+F-Droid 公開の本命は `fdroid-build` ジョブであり、こちらは
+`EXPO_TOKEN` に依存せず常に同じ経路（署名除去 → `app-release-unsigned.apk`）で通る。
+
+> **注意**: `expo prebuild` が生成する `app/build.gradle` には
+> `release { signingConfig signingConfigs.debug }` が含まれるため、
+> 署名を除去しないビルドの出力は `app-release.apk`（debug 署名）になる。
+> `app-release-unsigned.apk` は署名を除去した場合だけのファイル名。
+
+### F-Droid 検証の厳格さ
+
+`fdroid-build` ジョブの NonFree チェックは、`fdroid/check-nonfree.py` で
+Gradle の依存グラフ（`releaseRuntimeClasspath`）を走査する。
+
+- 依存グラフの取得には **Gradle ラッパー (`./gradlew`)** を使う。
+  システム `gradle` はバージョンがプロジェクト（Gradle 8.6 固定）と不一致で失敗し、
+  出力が空になると判定が常に成功してしまう（空振り）
+- 依存グラフに `releaseRuntimeClasspath` が含まれない場合は **ジョブを失敗**させる
+- `aapt` が利用可能な場合は `package` 名と `versionCode` も検証する
+
 ### ビルド方式
 
 ビルドは **EAS ローカルビルド** (`eas build --local`) を採用している。
