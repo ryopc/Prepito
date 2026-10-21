@@ -12,20 +12,24 @@ import Constants from 'expo-constants';
  * 優先順位:
  *   1. ビルド時環境変数 (EXPO_PUBLIC_*) — Metro がバンドルへインライン化する
  *   2. app.config.ts の `extra.apiBaseUrl` / `extra.wsBaseUrl` — 単一情報源
- *   3. 開発時のフォールバック
+ *   3. 公開サーバ（app.config.ts と同じ値）
  *
  * Previously ここだけ環境変数を直接参照しており、app.config.ts の `extra` と
  * 二重定義になっていた（F-Droid ビルドなど環境変数を設定できない経路で
  * 不整合が発生する）。app.config.ts と同じ解決順序に揃える。
+ *
+ * フォールバックも `localhost` ではなく公開サーバにしている。
+ * release ビルドの AndroidManifest は cleartext を無効化しているため
+ * HTTP のままでは接続できず、気づかないまま「接続できない」状態になるため。
  */
 const API_BASE_URL =
   process.env.EXPO_PUBLIC_API_BASE_URL ||
   (Constants.expoConfig?.extra?.apiBaseUrl as string | undefined) ||
-  'http://localhost:3000';
+  'https://koshi.ryopc.org';
 const WS_BASE_URL =
   process.env.EXPO_PUBLIC_WS_BASE_URL ||
   (Constants.expoConfig?.extra?.wsBaseUrl as string | undefined) ||
-  'ws://localhost:3000';
+  'wss://koshi.ryopc.org';
 
 /** セキュアストレージキー */
 const STORAGE_KEYS = {

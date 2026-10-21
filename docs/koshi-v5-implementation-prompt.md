@@ -42,6 +42,36 @@ E2E 暗号化 DM を送受信できる状態になるまでeness、それが完�
 JWT は `signToken({ userId, username })` で、`requireAuth` が
 `req.user = { userId, username }` を設定する。**既存のトークン形式を壊さないこと。**
 
+### 1-1. 公開サーバでの実測（2026-10-21 / Prepito 開発者による検証）
+
+公開サーバ `https://koshi.ryopc.org` は **Render.com 上に Postgres 版
+（`bin/server.js`）をデプロイ**したインスタンスであり、**コミット済みの HEAD**
+（= v5 実装前の状態）が動作している。以下は実測結果。
+
+| 検証 | 結果 | 判定 |
+|------|------|------|
+| `GET /api/health` | 200 `{"status":"ok"}` | ✅ 動作 |
+| `POST /api/auth/register`（hex publicKey） | **201** | ✅ 動作 |
+| `POST /api/auth/login`（hex signature） | **200** | ✅ 動作 |
+| `GET /api/users/search/:query` | 200（配列） | ✅ 動作 |
+| `GET /api/posts/feed` | 200（配列） | ✅ 動作 |
+| `GET /api/keys/bundle/:userId` | 400 `Cannot request key bundle for yourself.` | ✅ 実装済み（自己参照の拒否も正常動作） |
+| WebSocket `wss://koshi.ryopc.org/ws?token=<jwt>` | **101 Switching Protocols** → `{"type":"user_online",...}` | ✅ 動作 |
+| `GET /api/users/me` | **404** `User not found` | ❌ **未実装**（2-7 対応対象） |
+| `POST /api/devices` | **500** `Internal server error` | ❌ **壊れている**（2-1 対応対象） |
+| `GET /api/config` | 404 | ⚠️ Postgres 版には存在しない（クライアントは未使用） |
+
+**重要な含意**:
+
+1. `GET /api/users/me` の 404 と `POST /api/devices` の 500 は、
+   **ローカル作業ツリー（未コミットの v5 実装）には既に修正计入されている**が、
+   コミット &\ push されていないため**公開サーバには反映されていない**
+2. したがって本プロンプトの作業は、**未コミットの差分を整理してコミット &\ push**し、
+   **Render の自動デプロイを待つ**ことで公開サーバに反映される
+3. `POST /api/devices` の 500 は原因が DB スキーマ（`one_time_pre_keys` の JSONB 化）
+   と実装の不整合である可能性が高い。**既存 DB に対するマイグレーション**が
+   必要になる可能性がある点に注意すること
+
 ### 2. 実装が必要なエンドポイント（10 項目）
 
 > **重要**: レスポンスのキー名・型は**クライアントが固定で前提としている**。
@@ -393,6 +423,38 @@ curl -s -X DELETE "localhost:3000/api/devices/$OTHER_DEVICE_ID" -H "Authorizatio
 - `node --check src/local/server-standalone.js` が通る
 - `npm run lint`（`eslint . --ext .js`）で **error 0 件**
 - サーバ起動時に **エラー・警告なく**ログが出ること（SQL の構文エラー多有注意）
+
+### 7-1. 公開サーバへの反映確認（デプロイ後）
+
+ローカル検証.maps、**コミット &\ push 後に公開サーバでも同じ受け入れ基準を確認する**こと
+（Render の自動デプロイ完了を待つ。反映されない場合は手動で
+`https://koshi.ryopc.org` に対して再確認する）。
+
+```bash
+BASE=https://koshi.ryopc.org
+
+# 1) 登録（publicKey は hex 64 文字）
+curl -s -X POST "$BASE/api/auth/register" -H 'Content-Type: application/json' \
+  -d '{"username":"alice","publicKey":"'$(printf 'a%.0s' {1..64})'"}'
+# → 201 {"userId":"...","token":"..."}
+
+# 2) デバイス登録（鍵は base64）→ 公開サーバは現状 500 になるはず
+curl -s -X POST "$BASE/api/devices" \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"deviceName":"Pixel 8","identityKey":"<base64 33B>","signedPreKey":"<base64 33B>","preKeySignature":"<base64 64B>","oneTimePreKeys":["<base64 33B>"]}'
+# → 201 {"id":"...",...} （デプロイ前なら 500）
+
+# 3) GET /api/users/me → 公開サーバは現状 404 になるはず
+curl -s "$BASE/api/users/me" -H "Authorization: Bearer $TOKEN"
+# → 200 {...} （デプロイ前なら 404）
+
+# 4) WebSocket 接続（wss）
+# node -e で 'wss://koshi.ryopc.org/ws?token=<jwt>' に接続し
+# {"type":"user_online",...} を受信できること
+```
+
+**合格条件**: 上記 2) と 3) が **200 / 201** を返すこと
+（公開サーバで 500 / 404 のままならデプロイが反映されていない）。
 
 ### 8. 制約・禁止事項
 

@@ -121,8 +121,20 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     typedRoutes: true,
   },
   extra: {
-    apiBaseUrl: process.env.EXPO_PUBLIC_API_BASE_URL || 'http://localhost:3000',
-    wsBaseUrl: process.env.EXPO_PUBLIC_WS_BASE_URL || 'ws://localhost:3000',
+    /**
+     * 公開サーバの URL（単一情報源）
+     *
+     * F-Droid ビルドサーバは環境変数を設定できないため、
+     * `EXPO_PUBLIC_*` は Metro のバンドル時にインライン化されるだけで
+     * 値を差し込めない。公開 URL を**リポジトリにコミットして固定する**。
+     *
+     * - release ビルドの AndroidManifest は cleartext を無効化しているため
+     *   HTTPS / WSS 必須（debug ビルドのみ `usesCleartextTraffic="true"`）
+     * - ローカル開発で別サーバを使いたい場合は
+     *   `EXPO_PUBLIC_API_BASE_URL` / `EXPO_PUBLIC_WS_BASE_URL` で上書きする
+     */
+    apiBaseUrl: process.env.EXPO_PUBLIC_API_BASE_URL || 'https://koshi.ryopc.org',
+    wsBaseUrl: process.env.EXPO_PUBLIC_WS_BASE_URL || 'wss://koshi.ryopc.org',
     koshiVersion: '4.0.0',
     /**
      * プッシュ通知（Expo Push / FCM）の有効フラグ

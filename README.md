@@ -565,17 +565,30 @@ F-Droid の `prebuild` コマンドは `;` で連結され、**cwd がリポジ�
 | 項目 | 状況 |
 |------|------|
 | phoneScreenshots | `fastlane/metadata/android/*/images/phoneScreenshots/` は未投入。実機でのスクリーンショット取得後に追加する（掲載には任意） |
-| サーバ URL | 既定の `localhost` のまま。公開サーバの用意が必要 |
+| サーバ URL | **確定**。`https://koshi.ryopc.org` / `wss://koshi.ryopc.org`（`app.config.ts` にコミット済み） |
 | アイコン以外の画像 | `icon.png`（512x512）と `featureGraphic.png`（1024x500）は投入済み |
+
+### サーバ URL
+
+| 用途 | URL |
+|------|-----|
+| API | `https://koshi.ryopc.org` |
+| WebSocket | `wss://koshi.ryopc.org` |
+
+- `app.config.ts` の `extra.apiBaseUrl` / `extra.wsBaseUrl` が単一の情報源
+- F-Droid ビルドサーバは環境変数を設定できないため、
+  `EXPO_PUBLIC_*` への依存を避け**公開 URL をリポジトリにコミット**している
+  （`EXPO_PUBLIC_*` は Metro のバンドル時にインライン化されるだけ）
+- release ビルドの AndroidManifest は cleartext を無効化しているため
+  **HTTPS / WSS 必須**（`usesCleartextTraffic="true"` は debug ビルドのみ）
+- ローカル開発で別サーバを使う場合は
+  `EXPO_PUBLIC_API_BASE_URL` / `EXPO_PUBLIC_WS_BASE_URL` で上書きする
 
 ### F-Droid 版での制約
 
 - **プッシュ通知は無効**。Google Play Services に依存するため
   （`EXPO_PUBLIC_ENABLE_PUSH=false`）。アプリは起動中の間 WebSocket で
   リアルタイムにメッセージを受信する
-- **サーバ URL は公開 HTTPS が必要**。`app.config.ts` の
-  `extra.apiBaseUrl` / `extra.wsBaseUrl` に公開エンドポイントを設定する
-  （既定の `localhost` では動作しない）
 - **`android/` は git 管理外**。F-Droid は `expo prebuild` を実行して生成する
 - **サーバ側 API の制約**。`/api/devices`・`/api/keys/bundle/:userId` 等が
   未実装の koshi に対しては E2E 通信が成立しない（Platform API 節を参照）
