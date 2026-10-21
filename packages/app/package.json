@@ -57,7 +57,7 @@
   },
   "devDependencies": {
     "@babel/core": "^7.24.0",
-    "@babel/plugin-proposal-decorators": "^7.24.0",
+    "@babel/plugin-proposal-decorators": "^8.0.2",
     "@react-native/gradle-plugin": "0.74.87",
     "@signalapp/libsignal-client": "^0.40.0",
     "@testing-library/react-native": "^12.5.0",
