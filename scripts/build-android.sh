@@ -33,7 +33,7 @@ fi
 
 # --- firebase-stub の取得 -------------------------------------------------
 if [ ! -d "$STUB_CACHE_DIR/firebase-messaging/src" ]; then
-  echo "==> firebase-stub を取得します（$FB_STUB_SHA）"
+  echo "==> firebase-stub を取得します（${FB_STUB_SHA}）"
   mkdir -p "$STUB_CACHE_DIR"
   curl -fsSL "https://gitlab.com/freed-by-fdroid/firebase-stubs/-/archive/${FB_STUB_SHA}/firebase-stubs-${FB_STUB_SHA}.tar.gz" \
     | tar xz -C "$STUB_CACHE_DIR" --strip-components=1
@@ -48,7 +48,7 @@ VERCODE="$(grep -oE 'versionCode:[[:space:]]*[0-9]+' packages/app/app.config.ts 
 test -n "$VERCODE" || { echo "::error::app.config.ts から versionCode を取得できません" >&2; exit 1; }
 
 # --- ビルド準備 -----------------------------------------------------------
-echo "==> ビルド準備（署名モード: $SIGNING_MODE / versionCode: $VERCODE）"
+echo "==> ビルド準備（署名モード: ${SIGNING_MODE} / versionCode: ${VERCODE}）"
 FIREBASE_STUB_DIR="$STUB_CACHE_DIR" \
 VERCODE="$VERCODE" \
 PREPITO_SIGNING_MODE="$SIGNING_MODE" \

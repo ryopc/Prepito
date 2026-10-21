@@ -85,6 +85,9 @@ module.exports = [
         require: 'readonly',
         module: 'writable',
         exports: 'writable',
+        // config plugin は Node 上で実行されるため環境変数を参照する
+        // （署名設定の読み取りなど）
+        process: 'readonly',
         __dirname: 'readonly',
         __filename: 'readonly',
       },

@@ -62,6 +62,16 @@ jobs:
         run: pnpm --filter @prepito/shared lint
       - name: Lint - app
         run: pnpm --filter @prepito/app lint
+      # シェル変数参照の直後に全角文字があると、bash が変数名の一部に
+      # 取り込んで `unbound variable` で停止する（原因が分かりにくい）。
+      # ビルド前に静的検査で検出する。
+      - name: Check shell variable references
+        run: |
+          python3 scripts/check-shell-vars.py \
+            fdroid/build-recipe.sh \
+            scripts/build-android.sh \
+            .github/workflows/ci.yml \
+            .github/workflows/release.yml
 
   test:
     name: Test

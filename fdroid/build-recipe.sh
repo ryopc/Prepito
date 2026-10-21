@@ -46,6 +46,21 @@ case "$PREPITO_SIGNING_MODE" in
       echo "::error::keystore が見つかりません: $PREPITO_KEYSTORE_FILE" >&2
       exit 1
     fi
+    # keystore がストアパスワードで開き、エイリアスが存在するかを確認する。
+    # Gradle 側の失敗（"keystore password was incorrect" 等）は原因が分かりにくい
+    # ため、ここで先に検証して明示的なエラーにする。
+    if command -v keytool > /dev/null 2>&1; then
+      if ! keytool -list -keystore "$PREPITO_KEYSTORE_FILE" \
+           -storepass "$PREPITO_KEYSTORE_PASSWORD" \
+           -alias "$PREPITO_KEY_ALIAS" > /dev/null 2>&1; then
+        echo "::error::keystore を開けません。ストアパスワードまたはエイリアスが誤っています" >&2
+        echo "::error::  エイリアス: $PREPITO_KEY_ALIAS" >&2
+        exit 1
+      fi
+      echo "    keystore を検証しました（エイリアス: ${PREPITO_KEY_ALIAS}）"
+    else
+      echo "::warning::keytool が見つからないため keystore の事前検証をスキップします"
+    fi
     ;;
   *)
     echo "::error::PREPITO_SIGNING_MODE は 'unsigned' または 'release' です（指定値: '$PREPITO_SIGNING_MODE'）" >&2

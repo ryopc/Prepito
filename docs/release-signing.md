@@ -28,11 +28,18 @@ Android は APK の署名を update の同一性判定に使います。
 ```bash
 keytool -genkeypair -v \
   -keystore prepito-release.keystore \
+  -storetype JKS \
   -alias prepito \
   -keyalg RSA \
   -keysize 4096 \
   -validity 10000
 ```
+
+> **重要**: `-storetype JKS` を明示すること。
+> JDK 9 以降の `keytool` の既定は **PKCS12** だが、PKCS12 は
+> 「ストアのパスワード」と「鍵のパスワード」を別々に設定できない
+> （`-keypass` が無視され、鍵のパスワードはストアのパスワードと同一になる）。
+> 明示的に JKS にすることで、ストアと鍵で異なるパスワードを使える。
 
 入力する内容:
 
@@ -44,7 +51,7 @@ keytool -genkeypair -v \
 | 氏名 / 組織名 / 都市名 / 都道府県 / 国 | `ryopc` / `ryopc` / 任意 / 任意 / `JP` |
 
 生成された `prepito-release.keystore` は**リポジトリにコミットしない**こと
-（`.gitignore` 対象にするか、リポジトリ外に置く）。
+（`.gitignore` に対象パターンを追加済み）。
 
 ## 2. GitHub Secret への登録
 

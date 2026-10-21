@@ -1,13 +1,4 @@
 const path = require('path');
-/**
- * 環境変数は `require('process')` から取得する。
- *
- * プラグイン（plugins ディレクトリ）向けの ESLint 設定では `process` が
- * グローバルとして宣言されていないため、`process.env` を直接参照すると
- * `no-undef` エラーになる。Node 標準モジュールを require することで
- * 同じ値を取得しつつ、Lint を通せるようにする。
- */
-const { env } = require('process');
 const { withAppBuildGradle } = require('expo/config-plugins');
 
 /**
@@ -465,7 +456,7 @@ function requireValue(name, value) {
  */
 function resolveSigningConfig(props) {
   const options = props || {};
-  const mode = options.mode !== undefined ? options.mode : env[ENV_MODE];
+  const mode = options.mode !== undefined ? options.mode : process.env[ENV_MODE];
 
   if (mode === undefined || mode === null || mode === '') {
     // 未指定なら何もしない（prebuild 既定の debug 署名のまま）
@@ -486,19 +477,21 @@ function resolveSigningConfig(props) {
   const values = {
     keystoreFile: requireValue(
       ENV_KEYSTORE_FILE,
-      options.keystoreFile !== undefined ? options.keystoreFile : env[ENV_KEYSTORE_FILE]
+      options.keystoreFile !== undefined ? options.keystoreFile : process.env[ENV_KEYSTORE_FILE]
     ),
     keystorePassword: requireValue(
       ENV_KEYSTORE_PASSWORD,
-      options.keystorePassword !== undefined ? options.keystorePassword : env[ENV_KEYSTORE_PASSWORD]
+      options.keystorePassword !== undefined
+        ? options.keystorePassword
+        : process.env[ENV_KEYSTORE_PASSWORD]
     ),
     keyAlias: requireValue(
       ENV_KEY_ALIAS,
-      options.keyAlias !== undefined ? options.keyAlias : env[ENV_KEY_ALIAS]
+      options.keyAlias !== undefined ? options.keyAlias : process.env[ENV_KEY_ALIAS]
     ),
     keyPassword: requireValue(
       ENV_KEY_PASSWORD,
-      options.keyPassword !== undefined ? options.keyPassword : env[ENV_KEY_PASSWORD]
+      options.keyPassword !== undefined ? options.keyPassword : process.env[ENV_KEY_PASSWORD]
     ),
   };
 
