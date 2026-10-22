@@ -151,8 +151,9 @@ export const authApi = {
    * 公開鍵は **hex** で送信する（koshi は `/^[0-9a-f]{64}$/i` で検証する）。
    * base64 で送信すると 400 "Invalid public key format" になる。
    *
-   * NOTE: koshi 4.0.0 は refreshToken を返さない（`{ token, userId }` のみ）。
-   * トークン更新は `POST /api/auth/refresh` が未実装のため利用できない。
+   * NOTE: koshi v5 以降は `refreshToken` も 함께返る（`{ userId, token, refreshToken }`）。
+   * `POST /api/auth/refresh` でアクセストークンを再発行できる
+   * （refresh token は使用ごとにローテーションされ、再利用は 401 になる）。
    */
   register: (username: string, publicKey: string) =>
     api.post<{ userId: string; token: string; refreshToken?: string }>('/api/auth/register', {
@@ -196,6 +197,11 @@ export const usersApi = {
       createdAt: string;
       followersCount: number;
       followingCount: number;
+      /**
+       * ed25519 公開鍵（hex 64 文字）。
+       * koshi v5 の `GET /api/users/me` に含まれる。
+       */
+      publicKey?: string;
     }>('/api/users/me'),
 
   /** プロフィール更新 */

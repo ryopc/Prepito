@@ -135,7 +135,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
      */
     apiBaseUrl: process.env.EXPO_PUBLIC_API_BASE_URL || 'https://koshi.ryopc.org',
     wsBaseUrl: process.env.EXPO_PUBLIC_WS_BASE_URL || 'wss://koshi.ryopc.org',
-    koshiVersion: '4.0.0',
+    koshiVersion: '5.0.0',
     /**
      * プッシュ通知（Expo Push / FCM）の有効フラグ
      *

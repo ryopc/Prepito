@@ -4,24 +4,50 @@
 > [`koshi-v5-implementation-prompt.md`](koshi-v5-implementation-prompt.md)
 
 Prepito（クライアント）が前提とする koshi サーバの API 仕様です。
-`@ryopc/koshi@4.0.0` および `ryopc/koshi` の `main` ブランチには
-下表の ⚠️ エンドポイントが**未実装**のため、現状 E2E 暗号化通信が成立しません。
 
-| メソッド | パス | 実装 | 用途 |
-|---------|------|------|------|
-| POST | `/api/auth/register` | ✅ | ユーザー登録（公開鍵は hex） |
-| POST | `/api/auth/login` | ✅ | .ed25519 チャレンジ応答ログイン |
-| POST | `/api/auth/refresh` | ⚠️ 未実装 | アクセストークン更新 |
-| POST | `/api/auth/logout` | ⚠️ 未実装 | ログアウト（best-effort のため 404 でも可） |
-| GET | `/api/users/me` | ⚠️ 未実装 | 自分のプロフィール取得 |
-| POST | `/api/users/me/push-token` | ⚠️ 未実装 | プッシュトークン登録 |
-| DELETE | `/api/users/me/push-token` | ⚠️ 未実装 | プッシュトークン削除 |
-| GET | `/api/devices` | ⚠️ 未実装 | 自分のデバイス一覧 |
-| POST | `/api/devices` | ⚠️ 未実装 | デバイス登録（X3DH 鍵） |
-| DELETE | `/api/devices/:deviceId` | ⚠️ 未実装 | デバイス削除 |
-| GET | `/api/devices/user/:userId` | ⚠️ 未実装 | 他ユーザーのデバイス取得 |
-| GET | `/api/keys/bundle/:userId` | ⚠️ 未実装 | **PreKey Bundle 取得（X3DH の要）** |
-| GET/POST | `/api/groups/*` | ⚠️ 未実装 | グループ機能（現状クライアントでも未使用） |
+## ✅ 実装済み・本番デプロイ済み（2026-10-22 確認）
+
+公開サーバ `https://koshi.ryopc.org` に対し、Prepito クライアントの
+**契約に一致するレスポンス**が返ることを確認しました
+（コミット `ad971ae` / `a15aae7` で Render へデプロイ済み）。
+
+| メソッド | パス | 実装 | 用途 | 実測 |
+|---------|------|------|------|------|
+| POST | `/api/auth/register` | ✅ | ユーザー登録（公開鍵は hex） | 201 |
+| POST | `/api/auth/login` | ✅ | ed25519 チャレンジ応答ログイン | 200 |
+| POST | `/api/auth/refresh` | ✅ | アクセストークン更新（refresh token はローテーション） | 200 / 再利用 401 |
+| POST | `/api/auth/logout` | ✅ | ログアウト | 200 `{"success":true}` |
+| GET | `/api/users/me` | ✅ | 自分のプロフィール取得（`publicKey` / `isAdmin` 付き） | 200 |
+| POST | `/api/users/me/push-token` | ✅ | プッシュトークン登録 | 200 |
+| DELETE | `/api/users/me/push-token` | ✅ | プッシュトークン削除 | 200 |
+| GET | `/api/devices` | ✅ | 自分のデバイス一覧 | 200 |
+| POST | `/api/devices` | ✅ | デバイス登録（X3DH 鍵） | 201 |
+| DELETE | `/api/devices/:deviceId` | ✅ | デバイス削除（他人のものは 404） | 200 / 404 |
+| GET | `/api/devices/user/:userId` | ✅ | 他ユーザーのデバイス取得 | 200 |
+| GET | `/api/keys/bundle/:userId` | ✅ | **PreKey Bundle 取得（X3DH の要）** | 200（prekey 1 消費） |
+| GET | `/api/users/:username` | ✅ | プロフィール取得（`publicKey` hex 64 / `isAdmin` 付き） | 200 |
+| GET/POST | `/api/groups/*` | ⚠️ 未実装 | グループ機能（現状クライアントでも未使用） | - |
+
+**E2E 暗号化 DM の実証**: アプリの実暗号実装（純 TS Signal Protocol）を使い、
+実サーバに対して X3DH セッション確立 → Double Ratchet 暗号化 → DM 送受信 →
+復号までを一気通貫で検証済み。平文完全一致・2 通目も成功。
+検証スクリプト: [`packages/app/scripts/live-e2e-dm.cjs`](../packages/app/scripts/live-e2e-dm.cjs)
+
+```bash
+# 公開サーバに対して E2E 暗号化 DM を通す（本番 DB にテストユーザを作るため注意）
+node packages/app/scripts/live-e2e-dm.cjs
+```
+
+### 実装上の注意点
+
+- `bundle.oneTimePreKeys` は **base64 の `string[]`** で返る
+  （サーバ内部では JSONB `[{id, publicKey}]` で保存しているが、API 層で `string[]` に変換される）
+- `preKeySignature` は **XEdDSA 署名**であること
+  （identity 鍵で signed prekey の公開鍵に署名する。
+  不正な署名を登録してもサーバは受理し、クライアント側で
+  `Signature validation failed` によりセッション確立に失敗する）
+- `POST /api/auth/refresh` は refresh token を使用ごとにローテーションされ、
+  使用済みのトークンの再利用は 401 になる
 
 ---
 

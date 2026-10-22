@@ -46,7 +46,7 @@ interface AuthState {
   // Actions
   setAuth: (tokens: {
     accessToken: string;
-    /** koshi 4.0.0 は refreshToken を返さないため任意 */
+    /** koshi v5 以降は常に返る。旧サーバ（v4）との互換のため任意のままにする */
     refreshToken?: string;
     userId: string;
     username: string;

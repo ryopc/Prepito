@@ -590,8 +590,10 @@ F-Droid の `prebuild` コマンドは `;` で連結され、**cwd がリポジ�
   （`EXPO_PUBLIC_ENABLE_PUSH=false`）。アプリは起動中の間 WebSocket で
   リアルタイムにメッセージを受信する
 - **`android/` は git 管理外**。F-Droid は `expo prebuild` を実行して生成する
-- **サーバ側 API の制約**。`/api/devices`・`/api/keys/bundle/:userId` 等が
-  未実装の koshi に対しては E2E 通信が成立しない（Platform API 節を参照）
+- **サーバ側 API の制約**。koshi v5（公開サーバ `https://koshi.ryopc.org` に
+  デプロイ済み）で `POST /api/devices`・`GET /api/keys/bundle/:userId` 等の
+  エンドポイントが揃い、**E2E 暗号化通信が成立している**（Platform API 節を参照）。
+  検証スクリプト: `packages/app/scripts/live-e2e-dm.cjs`
 
 ## 🛠 Tech Stack
 

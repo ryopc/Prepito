@@ -3,6 +3,19 @@
 > **このファイルは他 AI エージェントへ渡す実装プロンプトです。**
 > 「プロンプト」節の内容をそのまま渡してください。
 
+## ✅ 完了済み（2026-10-22）
+
+koshi v5 は**実装・本番デプロイ・受入検証まで完了**しています。
+
+- 実装コミット: `ad971ae`（Signal Protocol 対応サーバ API）/ `a15aae7`（Render 再デプロイ）
+- 公開サーバ `https://koshi.ryopc.org` で全 10 エンドポイントが動作
+- Prepito クライアント側でも **E2E 暗号化 DM の送受信が成立**することを実証済み
+  （`packages/app/scripts/live-e2e-dm.cjs` / PASS 9・FAIL 0）
+- 本番 DB（Neon）へのマイグレーション適用済み
+
+以下は**実装当時の記録**として残しているため、参照する際は
+特に仕様・受け入れ基準を確認すること。
+
 ---
 
 ## プロンプト
@@ -12,7 +25,7 @@
 成立させるためのサーバ API** を実装してください。
 
 クライアント（React Native アプリ **Prepito**）が実サーバに対して
-E2E 暗号化 DM を送受信できる状態になるまでeness、それが完了条件です。
+E2E 暗号化 DM を送受信できる状態になるまでが、完了条件です。
 
 ### 0. 前提情報
 
@@ -44,6 +57,10 @@ JWT は `signToken({ userId, username })` で、`requireAuth` が
 
 ### 1-1. 公開サーバでの実測（2026-10-21 / Prepito 開発者による検証）
 
+> **⚠️ この節は「v5 実装前」の状態を示す記録です。**
+> 2026-10-22 時点で v5 は実装・デプロイ済みで、
+> 下記の ❌ 2 項目はいずれも解消しています（末尾の「解消後の実測」を参照）。
+
 公開サーバ `https://koshi.ryopc.org` は **Render.com 上に Postgres 版
 （`bin/server.js`）をデプロイ**したインスタンスであり、**コミット済みの HEAD**
 （= v5 実装前の状態）が動作している。以下は実測結果。
@@ -71,6 +88,26 @@ JWT は `signToken({ userId, username })` で、`requireAuth` が
 3. `POST /api/devices` の 500 は原因が DB スキーマ（`one_time_pre_keys` の JSONB 化）
    と実装の不整合である可能性が高い。**既存 DB に対するマイグレーション**が
    必要になる可能性がある点に注意すること
+
+#### 解消後の実測（2026-10-22 / v5 デプロイ後）
+
+| 検証 | 結果 | 判定 |
+|------|------|------|
+| `GET /api/users/me` | **200**（`publicKey` / `isAdmin` 付き） | ✅ 解消 |
+| `POST /api/devices` | **201**（base64 鍵を受理） | ✅ 解消 |
+| `GET /api/devices` | **200**（配列） | ✅ |
+| `DELETE /api/devices/:deviceId` | 200（自分の）/ 404（他人） | ✅ 認可も正常 |
+| `GET /api/devices/user/:userId` | **200** | ✅ |
+| `GET /api/keys/bundle/:userId` | **200**（prekey 1 消費） | ✅ |
+| `POST /api/auth/refresh` | **200**（ローテーション）→ 使用済み再利用は 401 | ✅ |
+| `POST /api/auth/logout` | **200** `{"success":true}` | ✅ |
+| `POST\|DELETE /api/users/me/push-token` | **200** `{"success":true}` | ✅ |
+| `GET /api/users/:username` | **200**（`publicKey` hex 64 が登録値と一致） | ✅ |
+| E2E 暗号化 DM（X3DH + Double Ratchet） | 平文完全一致・2 通目も成功 | ✅ |
+
+**クライアント側からの受け入れ**: `packages/app/scripts/live-e2e-dm.cjs` が
+Prepito の実暗号実装で実サーバに対して E2E 暗号化 DM を通し、
+PASS 9 / FAIL 0 を確認する（`node packages/app/scripts/live-e2e-dm.cjs`）。
 
 ### 2. 実装が必要なエンドポイント（10 項目）
 

@@ -98,7 +98,7 @@ module.exports = [
     },
   },
 
-  // Node スクリプト（暗号相互運用テストなど。React Native ランタイム外で実行する）
+  // Node スクリプト（暗号相互運用テスト・実サーバ疎通確認など。React Native ランタイム外で実行する）
   {
     files: ['**/scripts/**/*.{js,cjs,mjs}'],
     languageOptions: {
@@ -112,6 +112,14 @@ module.exports = [
         Buffer: 'readonly',
         __dirname: 'readonly',
         __filename: 'readonly',
+        // Node 18 以降のグローバル（実サーバとの疎通確認で使用する）
+        fetch: 'readonly',
+        setTimeout: 'readonly',
+        clearTimeout: 'readonly',
+        setInterval: 'readonly',
+        clearInterval: 'readonly',
+        URL: 'readonly',
+        URLSearchParams: 'readonly',
       },
     },
     rules: {
